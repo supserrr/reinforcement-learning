@@ -1,0 +1,70 @@
+{
+  "algo": "reinforce",
+  "run": "run06",
+  "hparams": {
+    "total_frames": 600000,
+    "lr": 0.0003,
+    "gamma": 0.99,
+    "hidden": 128,
+    "episodes_per_update": 16,
+    "baseline": "value",
+    "normalize": true,
+    "entropy_coef": 0.02,
+    "critic_lr": 0.001,
+    "seed": 0,
+    "note": "16 episodes per update"
+  },
+  "wall_s": 535.3,
+  "eval": {
+    "default": {
+      "return_mean": -10.2,
+      "return_std": 19.0541334098405,
+      "delivered_emergency": 2.9,
+      "delivered_routine": 4.5,
+      "missed_emergency": 4.45,
+      "missed_routine": 3.45,
+      "service_rate": 0.4517606917935866,
+      "crashed": 0.0,
+      "stranded": 0.1,
+      "wasted_trips": 0.85,
+      "invalid_actions": 0.0,
+      "recharges": 17.25,
+      "km_flown": 334.09882115278043,
+      "mean_emergency_wait": 22.062316109637568
+    },
+    "busy": {
+      "return_mean": -28.95,
+      "return_std": 22.957515109436386,
+      "delivered_emergency": 3.45,
+      "delivered_routine": 5.05,
+      "missed_emergency": 6.7,
+      "missed_routine": 4.0,
+      "service_rate": 0.4026512716243838,
+      "crashed": 0.0,
+      "stranded": 0.25,
+      "wasted_trips": 0.9,
+      "invalid_actions": 0.0,
+      "recharges": 18.9,
+      "km_flown": 377.6641881236501,
+      "mean_emergency_wait": 22.13533146399547
+    },
+    "windy": {
+      "return_mean": -13.45,
+      "return_std": 20.387434855812536,
+      "delivered_emergency": 2.9,
+      "delivered_routine": 4.45,
+      "missed_emergency": 4.6,
+      "missed_routine": 3.45,
+      "service_rate": 0.44515225894676363,
+      "crashed": 0.0,
+      "stranded": 0.2,
+      "wasted_trips": 0.9,
+      "invalid_actions": 0.0,
+      "recharges": 17.25,
+      "km_flown": 332.0600936817457,
+      "mean_emergency_wait": 21.749321496733725
+    }
+  },
+  "final_train_return": -32.176458282470705,
+  "episodes": 8512
+}

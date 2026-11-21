@@ -1,0 +1,13 @@
+{
+  "total_frames": 600000,
+  "lr": 0.0003,
+  "gamma": 0.99,
+  "hidden": 128,
+  "episodes_per_update": 8,
+  "baseline": "value",
+  "normalize": true,
+  "entropy_coef": 0.02,
+  "critic_lr": 0.001,
+  "seed": 0,
+  "note": "baseline (value baseline, normalised returns)"
+}

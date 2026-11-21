@@ -1,0 +1,21 @@
+{
+  "total_frames": 600000,
+  "lr": 0.0005,
+  "gamma": 0.99,
+  "hidden": 256,
+  "buffer_size": 50000,
+  "batch_size": 128,
+  "frames_per_batch": 64,
+  "updates_per_batch": 4,
+  "learning_starts": 2000,
+  "eps_start": 1.0,
+  "eps_end": 0.05,
+  "eps_frames": 60000,
+  "target_update": "hard",
+  "target_interval": 50,
+  "tau": 0.005,
+  "double_dqn": false,
+  "loss": "smooth_l1",
+  "seed": 0,
+  "note": "frequent target copy, Huber, wider net"
+}

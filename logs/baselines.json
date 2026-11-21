@@ -1,0 +1,62 @@
+{
+  "heuristic": {
+    "default": {
+      "return_mean": 41.4,
+      "return_std": 26.79626839692423,
+      "service_rate": 0.6874266950369893,
+      "crashed": 0.0
+    },
+    "busy": {
+      "return_mean": 5.4,
+      "return_std": 24.007082288358156,
+      "service_rate": 0.5291517775198284,
+      "crashed": 0.0
+    },
+    "windy": {
+      "return_mean": 37.8,
+      "return_std": 27.067692919789085,
+      "service_rate": 0.6721345974287151,
+      "crashed": 0.0
+    }
+  },
+  "random": {
+    "default": {
+      "return_mean": -157.94486471324927,
+      "return_std": 13.513124460095742,
+      "service_rate": 0.23161255411255408,
+      "crashed": 1.0
+    },
+    "busy": {
+      "return_mean": -205.22083401388585,
+      "return_std": 22.70178750334031,
+      "service_rate": 0.19772588522588525,
+      "crashed": 1.0
+    },
+    "windy": {
+      "return_mean": -156.57143940531083,
+      "return_std": 8.329310616798299,
+      "service_rate": 0.18416666666666665,
+      "crashed": 1.0
+    }
+  },
+  "hold": {
+    "default": {
+      "return_mean": -83.4,
+      "return_std": 18.491619723539635,
+      "service_rate": 0.0,
+      "crashed": 0.0
+    },
+    "busy": {
+      "return_mean": -118.4,
+      "return_std": 17.159254063041317,
+      "service_rate": 0.0,
+      "crashed": 0.0
+    },
+    "windy": {
+      "return_mean": -83.4,
+      "return_std": 18.491619723539635,
+      "service_rate": 0.0,
+      "crashed": 0.0
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "total_frames": 600000,
+  "lr": 0.0003,
+  "gamma": 0.995,
+  "lmbda": 0.8,
+  "clip_epsilon": 0.2,
+  "entropy_coef": 0.01,
+  "critic_coef": 0.5,
+  "frames_per_batch": 2048,
+  "epochs": 4,
+  "minibatch": 256,
+  "hidden": 128,
+  "max_grad_norm": 0.5,
+  "seed": 0,
+  "note": "GAE lambda 0.8, gamma 0.995"
+}

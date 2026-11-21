@@ -1,0 +1,24 @@
+[project]
+name = "drone-delivery-rl"
+version = "0.1.0"
+description = "Mission-based RL: a medical delivery drone in Rwanda's hills, trained with TorchRL (DQN, REINFORCE, PPO, A2C)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "gymnasium>=1.4.0",
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.5",
+    "pandas>=3.1.1",
+    "tensordict>=0.15.6",
+    "torch>=2.15.0",
+    "torchrl>=0.15.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
