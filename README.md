@@ -1,4 +1,4 @@
-# Mission-Based Reinforcement Learning: Medical Drone Delivery
+# Reinforcement Learning: Medical Drone Delivery
 
 Summative assignment, Machine Learning Techniques. Shima Serein.
 
