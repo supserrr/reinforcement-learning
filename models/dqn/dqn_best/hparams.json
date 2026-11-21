@@ -9,13 +9,13 @@
   "updates_per_batch": 4,
   "learning_starts": 2000,
   "eps_start": 1.0,
-  "eps_end": 0.05,
-  "eps_frames": 60000,
-  "target_update": "soft",
+  "eps_end": 0.01,
+  "eps_frames": 15000,
+  "target_update": "hard",
   "target_interval": 500,
-  "tau": 0.01,
-  "double_dqn": true,
+  "tau": 0.005,
+  "double_dqn": false,
   "loss": "l2",
   "seed": 0,
-  "note": "double DQN + soft target"
+  "note": "fast exploration decay"
 }

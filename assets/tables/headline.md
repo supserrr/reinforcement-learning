@@ -2,10 +2,10 @@
 
 | Method | Best run | Normal day | Busy day | Windy day | Service rate | Crash rate | Emergencies delivered | Emergencies missed | Mean emergency wait (min) |
 |---|---|---|---|---|---|---|---|---|---|
-| DQN | run08 (double DQN + soft target) | +51.3 ± 19.5 | +36.4 | +56.8 | 67% | 5% | 6.2 | 1.4 | 19.0 |
-| PPO | run09 (GAE lambda 0.8, gamma 0.995) | +55.6 ± 19.1 | +46.7 | +53.4 | 68% | 0% | 6.2 | 1.4 | 20.8 |
-| A2C | run08 (heavier critic, wider net) | +49.4 ± 26.9 | +37.7 | +50.8 | 67% | 5% | 5.9 | 1.2 | 23.8 |
-| REINFORCE | run02 (higher learning rate) | +36.8 ± 22.2 | +9.3 | +39.0 | 64% | 5% | 5.0 | 2.0 | 18.5 |
-| Hand-written dispatcher | n/a | +41.4 ± 26.8 | +5.4 | +37.8 | 69% | 0% | | | |
+| DQN | run07 (fast exploration decay) | +37.4 ± 22.9 | +23.1 | +30.3 | 56% | 0% | 5.8 | 1.7 | 19.9 |
+| PPO | run06 (strong entropy bonus) | +43.0 ± 29.1 | +9.1 | +34.3 | 63% | 0% | 5.5 | 1.6 | 22.1 |
+| A2C | run06 (strong entropy bonus) | +29.1 ± 21.6 | +15.1 | +27.0 | 58% | 0% | 4.9 | 2.5 | 21.4 |
+| REINFORCE | run02 (higher learning rate) | +5.1 ± 40.4 | -19.5 | +1.9 | 50% | 10% | 4.0 | 2.5 | 22.5 |
+| Hand-written dispatcher | n/a | +11.8 ± 24.9 | +0.9 | +12.2 | 56% | 0% | | | |
 | Always hold | n/a | -83.4 ± 18.5 | -118.4 | -83.4 | 0% | 0% | | | |
-| Random (masked) | n/a | -157.9 ± 13.5 | -205.2 | -156.6 | 23% | 100% | | | |
+| Random (masked) | n/a | -154.1 ± 11.3 | -209.4 | -152.3 | 16% | 100% | | | |

@@ -1,5 +1,6 @@
-// Liquid glass: the map behind a card bends at the card's rounded edges, as
-// through a thick lens, with a little colour fringing. Each card gets an SVG
+// Real glass: the scene behind a panel bends at its rounded edges, as through
+// a thick slab of clear glass. One displacement for all colours, so nothing
+// fringes or shifts hue; the panel's tint and blur come from style.css. Each card gets an SVG
 // filter whose displacement map is drawn for its size and corner radius.
 // Only Chromium can use an SVG filter as a backdrop-filter; other browsers keep
 // the frosted glass from style.css.
@@ -56,17 +57,9 @@ function filterFor(id, w, h, radius) {
   f.id = id;
   for (const [k, v] of Object.entries({ x: 0, y: 0, width: w, height: h, filterUnits: "userSpaceOnUse",
     primitiveUnits: "userSpaceOnUse", "color-interpolation-filters": "sRGB" })) f.setAttribute(k, v);
-  const scale = 46;
-  const channel = (name, s, row) => `
-    <feDisplacementMap in="SourceGraphic" in2="map" scale="${s}" xChannelSelector="R" yChannelSelector="G" result="d${name}"/>
-    <feColorMatrix in="d${name}" type="matrix" values="${row} 0 0 0 1 0" result="${name}"/>`;
   f.innerHTML = `
-    <feImage href="${edgeMap(w, h, radius, 22)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none" result="map"/>
-    ${channel("r", scale, "1 0 0 0 0  0 0 0 0 0  0 0 0 0 0")}
-    ${channel("g", scale * 0.93, "0 0 0 0 0  0 1 0 0 0  0 0 0 0 0")}
-    ${channel("b", scale * 0.86, "0 0 0 0 0  0 0 0 0 0  0 0 1 0 0")}
-    <feBlend in="r" in2="g" mode="screen" result="rg"/>
-    <feBlend in="rg" in2="b" mode="screen"/>`;
+    <feImage href="${edgeMap(w, h, radius, 18)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none" result="map"/>
+    <feDisplacementMap in="SourceGraphic" in2="map" scale="34" xChannelSelector="R" yChannelSelector="G"/>`;
   return f;
 }
 
@@ -86,7 +79,7 @@ export function liquidGlass(el) {
     // re-assigning the property makes the browser pick up the rebuilt filter
     el.style.backdropFilter = el.style.webkitBackdropFilter = "none";
     requestAnimationFrame(() => {
-      const v = `url(#${id}) blur(12px) saturate(1.7) brightness(0.8)`;
+      const v = `url(#${id}) blur(20px)`;
       el.style.backdropFilter = el.style.webkitBackdropFilter = v;
       el.classList.add("refracts");
     });

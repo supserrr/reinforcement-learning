@@ -88,7 +88,7 @@ def main():
     ap.add_argument("--episodes", type=int, default=3)
     ap.add_argument("--seed", type=int, default=10_000, help="first evaluation seed (never used in training)")
     ap.add_argument("--config", default="default", choices=("default", "busy", "windy"))
-    ap.add_argument("--ms-per-minute", type=float, default=110.0, help="animation speed: ms per simulated minute")
+    ap.add_argument("--ms-per-minute", type=float, default=110.0, help="pace with no browser open: ms per simulated minute")
     ap.add_argument("--no-viewer", action="store_true", help="terminal output only")
     ap.add_argument("--fast", action="store_true", help="do not wait for animations")
     ap.add_argument("--port", type=int, default=8765)
@@ -141,8 +141,8 @@ def main():
                   f"open: {fmt_requests(snap)}" + (f"  [{', '.join(notes)}]" if notes else ""))
             if viewer:
                 viewer.publish("step", msg)
-                if anim_ms:
-                    time.sleep(anim_ms / 1000)
+                if not args.fast:  # the page sets the pace; it says when the step has played
+                    viewer.wait_for_playback(ep + 1, step, anim_ms / 1000)
         jsonl.close()
         st = env.stats.as_dict()
         summary.append((seed, env.total_reward, st))

@@ -7,8 +7,9 @@ centre has to send a patient or a motorbike courier by road instead.
 
 Every decision the drone makes changes what it can do next:
 
-* Battery carries over. Flights cost energy that depends on distance, climb,
-  payload and the current wind. Recharging at the hub restores it but uses
+* Battery carries over. Flights cost energy that depends on distance, the
+  climb over the real hills on the way, payload and the current wind, plus
+  the catapult launch, the parachute drop and the wire recovery at the hub. Recharging at the hub restores it but uses
   shift time while requests wait. Running flat in the air is a crash.
 * Cargo carries over. The drone holds two packages, so it can serve two
   centres on one trip, but only if it loaded both before leaving the hub.
@@ -33,7 +34,8 @@ from gymnasium import spaces
 
 # --------------------------------------------------------------------------
 # The map: Muhanga distribution hub and six health centres (positions in km
-# from the hub, elevation in metres). The layout is stylised, not surveyed.
+# from the hub). The positions are stylised, not surveyed; the ground under
+# them is real (SRTM), baked by scripts/bake_routes.py from the viewer's map.
 # --------------------------------------------------------------------------
 HUB = 0
 SITE_NAMES = (
@@ -57,7 +59,19 @@ SITE_XY = np.array(
     ],
     dtype=np.float64,
 )
-SITE_ELEVATION_M = np.array([1850.0, 2300.0, 2100.0, 1900.0, 1750.0, 1800.0, 2200.0])
+SITE_ELEVATION_M = np.array([1838.0, 1941.0, 2131.0, 1643.0, 1447.0, 1601.0, 1541.0])
+# Metres climbed flying from site i to site j: a terrain-following cruise about
+# 120 m above the ground, out of the hub from the launcher or out of a centre
+# from its 90 m loiter (scripts/bake_routes.py).
+ROUTE_CLIMB_M = np.array([
+    [0.0, 919.0, 1055.0, 502.0, 284.0, 293.0, 585.0],
+    [726.0, 0.0, 695.0, 1155.0, 953.0, 704.0, 337.0],
+    [671.0, 505.0, 0.0, 358.0, 885.0, 898.0, 666.0],
+    [607.0, 1454.0, 846.0, 0.0, 227.0, 865.0, 1084.0],
+    [584.0, 1446.0, 1568.0, 423.0, 0.0, 553.0, 1067.0],
+    [439.0, 1044.0, 1428.0, 906.0, 399.0, 0.0, 510.0],
+    [791.0, 737.0, 1256.0, 1186.0, 973.0, 570.0, 0.0],
+])
 N_SITES = len(SITE_NAMES)
 N_CENTRES = N_SITES - 1
 
@@ -96,7 +110,16 @@ class DroneConfig:
     wind_energy_factor: float = 0.55  # full headwind at max wind = +55%
     max_wind_kmh: float = 40.0
     wind_mult: float = 1.0  # scales wind strength (generalisation tests)
-    hover_energy_per_min: float = 0.35
+    hover_energy_per_min: float = 0.35  # loitering over a centre
+    # flight operations: catapult launch at the hub, a descent to 35 m over the
+    # centre's drop zone for the parachute release, and the approach circuit
+    # into the recovery wire back at the hub
+    launch_minutes: float = 1.0
+    launch_energy: float = 0.5
+    drop_minutes: float = 0.5
+    drop_energy: float = 0.3
+    recovery_minutes: float = 2.0
+    recovery_energy: float = 0.8
     recharge_amount: float = 20.0
     recharge_minutes: float = 10.0
     load_minutes: float = 3.0
@@ -224,7 +247,7 @@ class DroneDeliveryEnv(gym.Env):
                 events.append({"type": "invalid", "reason": "already here", "at": self.loc})
             else:
                 need = self.flight_energy(self.loc, dest)
-                minutes = self._dist[self.loc, dest] / c.speed_km_per_min
+                minutes = self.flight_minutes(self.loc, dest)
                 if need > self.battery:
                     # battery runs out part-way: the drone goes down
                     frac = max(self.battery, 0.0) / need
@@ -322,6 +345,14 @@ class DroneDeliveryEnv(gym.Env):
         return self._obs(), float(reward), terminated, truncated, self._info()
 
     # ------------------------------------------------------------ dynamics
+    def flight_minutes(self, src: int, dst: int) -> float:
+        """Shift minutes a flight takes: cruise plus launch, drop or recovery."""
+        c = self.cfg
+        m = self._dist[src, dst] / c.speed_km_per_min
+        m += c.launch_minutes if src == HUB else 0.0
+        m += c.recovery_minutes if dst == HUB else c.drop_minutes
+        return m
+
     def flight_energy(self, src: int, dst: int, cargo: int | None = None) -> float:
         """Battery % a flight from src to dst costs right now."""
         if src == dst:
@@ -334,8 +365,8 @@ class DroneDeliveryEnv(gym.Env):
         headwind = -float(heading @ wind_vec) * min(self.wind_speed * c.wind_mult, 1.6)
         mult = 1.0 + c.wind_energy_factor * headwind
         mult *= 1.0 + c.payload_energy_factor * cargo
-        climb = max(0.0, SITE_ELEVATION_M[dst] - SITE_ELEVATION_M[src])
-        return d * c.energy_per_km * mult + climb * c.climb_energy_per_m
+        ops = (c.launch_energy if src == HUB else 0.0) + (c.recovery_energy if dst == HUB else c.drop_energy)
+        return d * c.energy_per_km * mult + ROUTE_CLIMB_M[src, dst] * c.climb_energy_per_m + ops
 
     def _crash_penalty(self) -> float:
         """A crash loses the aircraft and grounds the service, so every open

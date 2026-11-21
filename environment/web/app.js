@@ -1,13 +1,13 @@
 // Streams one JSON message per environment step from the Python server and
 // plays it back in the 3D world (world.js), with the HUD on top: the title and
-// camera tools, the agent tabs, the dock of cards, the destination card over
-// the map and toasts.
+// camera tools, the agent tabs, one panel with the shift, the destination card
+// over the map and toasts.
 import { createWorld } from "./world.js";
 import { liquidGlass } from "./glass.js";
 
 const world = createWorld(document.getElementById("scene"));
 window.__world = world; // for debugging from the console
-document.querySelectorAll(".card, .tray, .search, .popup-card").forEach(liquidGlass);
+document.querySelectorAll(".hud, .tray, .search, .popup-card").forEach(liquidGlass);
 let SITES = [];
 
 // ---------------------------------------------------------------- HUD
@@ -38,14 +38,17 @@ const km = (a, b) => Math.hypot(SITES[a].x - SITES[b].x, SITES[a].y - SITES[b].y
 function setBattery(b) {
   const el = $("battery");
   el.textContent = `${Math.max(0, b).toFixed(0)}%`;
-  el.classList.toggle("low", b <= 50 && b > 25);
-  el.classList.toggle("critical", b <= 25);
+  for (const e of [el, $("battery-bar")]) {
+    e.classList.toggle("low", b <= 50 && b > 25);
+    e.classList.toggle("critical", b <= 25);
+  }
+  $("battery-bar").firstChild.style.width = `${Math.min(Math.max(b, 0), 100)}%`;
 }
 function setClock(t, shift) {
   $("clock").textContent = clock(t);
   const p = Math.min(Math.max(t / shift, 0), 1);
-  $("pie").style.setProperty("--p", `${(p * 100).toFixed(1)}%`);
-  $("pie").setAttribute("aria-label", `Shift ${Math.round(p * 100)}% done`);
+  $("shift-bar").firstChild.style.width = `${(p * 100).toFixed(1)}%`;
+  $("shift-bar").setAttribute("aria-label", `Shift ${Math.round(p * 100)}% done`);
   world.setTime(t);
 }
 function setHud(snap) {
@@ -57,19 +60,12 @@ function setHud(snap) {
   const st = snap.stats;
   $("d-e").textContent = st.delivered_emergency;
   $("d-r").textContent = st.delivered_routine;
-  $("m-e").textContent = st.missed_emergency;
-  $("m-r").textContent = st.missed_routine;
+  $("m-e").textContent = `${st.missed_emergency} missed`;
+  $("m-r").textContent = `${st.missed_routine} missed`;
   $("m-e").classList.toggle("bad", st.missed_emergency > 0);
   $("m-r").classList.toggle("bad", st.missed_routine > 0);
-  $("f-km").textContent = `${Math.round(st.km_flown)} km`;
-  setPosition(snap.loc);
   world.setWind(snap.wind.speed_kmh, snap.wind.dir_rad);
   world.setCargo(snap.cargo);
-}
-function setPosition(i) {
-  $("f-pos").textContent = SITES[i].name;
-  $("f-elev").textContent = `${SITES[i].elevation_m.toLocaleString("en")} m`;
-  $("radar-site").textContent = SITES[i].name;
 }
 function setRequests(snap) {
   for (const s of SITES) {
@@ -88,24 +84,14 @@ function setRequests(snap) {
   }
 }
 function logDecision(msg) {
-  const li = document.createElement("li");
-  const r = msg.reward;
-  li.innerHTML = `<span class="t"></span><span class="a"></span><span class="r ${r < 0 ? "neg" : r === 0 ? "zero" : ""}"></span>`;
-  li.querySelector(".t").textContent = clock(msg.snapshot.t);
-  li.querySelector(".a").textContent = msg.action_name;
-  li.querySelector(".r").textContent = r === 0 ? "0" : signed(r);
-  $("log").prepend(li);
-  while ($("log").children.length > 12) $("log").lastChild.remove();
-  // one tick per decision on the return card, up for reward, down for penalty
-  const tick = document.createElement("span");
-  tick.className = r > 0 ? "pos" : r < 0 ? "neg" : "zero";
-  if (r) tick.style.height = `${Math.min(3 + Math.abs(r) * 1.1, 13)}px`;
-  $("ticks").append(tick);
-  while ($("ticks").children.length > 28) $("ticks").firstChild.remove();
+  const r = msg.reward, el = $("f-reward");
+  el.textContent = r === 0 ? "" : signed(r);
+  el.className = `reward num ${r < 0 ? "neg" : r === 0 ? "zero" : ""}`;
 }
 function setState(word, action) {
   $("state").textContent = word;
   $("f-action").textContent = action;
+  $("state-dot").className = `dot ${["Down", "Falling"].includes(word) ? "bad" : ["Flying", "Launching", "Landing", "Dropping", "Caught", "Circling", "Charging", "Loading"].includes(word) ? "live" : ""}`;
 }
 // the card over the destination: its request, the flight, the reward on delivery
 function showPopup(to, from, snapBefore) {
@@ -120,30 +106,44 @@ function showPopup(to, from, snapBefore) {
 }
 
 // ---------------------------------------------------------------- controls
+// Follow flies the camera down behind the drone (third person); turning it off,
+// or any map tool, flies it back up to the map.
 let follow = false;
-function setFollow(on) { follow = on; $("btn-follow").setAttribute("aria-pressed", String(on)); }
+function showFollow(on) { follow = on; $("btn-follow").setAttribute("aria-pressed", String(on)); document.body.classList.toggle("chase", on); }
+function setFollow(on) { showFollow(on); world.setFollow(on); }
 function toggleOrbit() { $("btn-orbit").setAttribute("aria-pressed", String(world.toggleOrbit())); }
+// playback speed: the page sets the pace and the agent waits for it
+const SPEEDS = [0.5, 1, 2, 4];
+let speed = 1;
+function setSpeed(v) {
+  speed = v;
+  for (const b of document.querySelectorAll("#speed button")) b.setAttribute("aria-pressed", String(Number(b.dataset.speed) === v));
+}
 window.addEventListener("keydown", (e) => {
   if (e.target.closest?.("input, textarea, [contenteditable]")) return;
   if (e.key === "f" || e.key === "F") setFollow(!follow);
   if (e.key === "o" || e.key === "O") toggleOrbit();
+  const i = SPEEDS.indexOf(speed);
+  if (e.key === "[" || e.key === "-") setSpeed(SPEEDS[Math.max(i - 1, 0)]);
+  if (e.key === "]" || e.key === "=" || e.key === "+") setSpeed(SPEEDS[Math.min(i + 1, SPEEDS.length - 1)]);
 });
+for (const b of document.querySelectorAll("#speed button")) b.addEventListener("click", () => setSpeed(Number(b.dataset.speed)));
 $("btn-follow").addEventListener("click", () => setFollow(!follow));
 $("btn-orbit").addEventListener("click", toggleOrbit);
-$("btn-hub").addEventListener("click", () => { setFollow(false); world.focusSite(0); });
+$("btn-hub").addEventListener("click", () => { showFollow(false); world.focusSite(0); });
 $("btn-labels").addEventListener("click", (e) => {
   const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
   e.currentTarget.setAttribute("aria-pressed", String(on));
   document.body.classList.toggle("labels-off", !on);
 });
-$("overview").addEventListener("click", () => { setFollow(false); world.resetView(); });
+$("overview").addEventListener("click", () => { showFollow(false); world.resetView(); });
 $("zoom-in").addEventListener("click", () => world.zoomBy(0.7));
 $("zoom-out").addEventListener("click", () => world.zoomBy(1.4));
 $("find").addEventListener("change", (e) => {
   const q = e.target.value.trim().toLowerCase();
   const s = SITES.find((x) => x.name.toLowerCase() === q) || SITES.find((x) => x.name.toLowerCase().includes(q));
   if (!q || !s) return;
-  setFollow(false);
+  showFollow(false);
   world.focusSite(s.id);
   e.target.value = "";
   e.target.blur();
@@ -154,14 +154,28 @@ let anim = null;
 const queue = [];
 let prevBattery = 100, prevT = 0, prevSnap = null;
 
+// How long a ground step plays at 1x. Flights take as long as their flight
+// plan (world.planLeg): take-off, the drop and the landing at 2.5x real time,
+// the cruise between them compressed.
+function stepDuration(msg) {
+  const ev = msg.snapshot.events || [];
+  if (ev.some((e) => e.type === "hold")) return msg.snapshot.loc !== 0 ? 3600 : 1500;
+  if (ev.some((e) => e.type === "recharge")) return 3200;
+  if (ev.some((e) => e.type === "load")) return 2200;
+  return 900;
+}
+const catchUp = () => (queue.length > 2 ? 3 : 1); // play faster if the page fell behind
+function played(msg) {
+  fetch("/api/ack", { method: "POST", body: JSON.stringify({ episode: msg.episode, step: msg.step }) }).catch(() => {});
+}
+
 function startStep(msg) {
   const snap = msg.snapshot;
   $("shift-no").textContent = `#${msg.episode}`;
   if (msg._reset) {
-    $("f-seed").textContent = msg.seed;
-    $("log").innerHTML = "";
-    $("ticks").innerHTML = "";
-    world.placeDrone(0);
+    logDecision({ reward: 0 });
+    world.placeDrone();
+    world.setCharging(false);
     world.showPopup(null);
     setHud(snap);
     setRequests(snap);
@@ -169,29 +183,35 @@ function startStep(msg) {
     prevBattery = snap.battery;
     prevT = snap.t;
     prevSnap = snap;
-    anim = { msg, t0: performance.now(), dur: 900, reset: true };
+    anim = { msg, el: 0, dur: 900, reset: true };
     return;
   }
-  const dur = Math.max(msg.anim_ms, 120) * (queue.length > 4 ? 0.3 : 1);
+  if (!prevSnap) { // a reloaded page joins mid-shift: start this step's clock and battery where it began
+    const took = (snap.events || []).reduce((m, e) => m + (e.minutes || 0), 0);
+    prevT = Math.max(snap.t - took, 0);
+    prevBattery = snap.battery;
+    $("shift-no").textContent = `#${msg.episode}`;
+    setHud(snap);
+    setRequests(snap);
+    prevSnap = snap;
+  }
   const ev = snap.events || [];
   const flight = ev.find((e) => e.type === "flight");
   const crash = ev.find((e) => e.type === "crash");
-  anim = { msg, t0: performance.now(), dur, curve: null, loiter: null, b0: prevBattery, b1: snap.battery, t0sim: prevT, t1sim: snap.t };
-  if (flight) {
-    anim.curve = world.flightCurve(flight.from, flight.to);
-    world.showRoute(world.flightCurve(flight.from, flight.to), flight.to);
-    if (!SITES[flight.to].hub) showPopup(flight.to, flight.from, prevSnap);
-    setState("Flying", msg.action_name);
-    $("f-pos").textContent = `To ${SITES[flight.to].name}`;
-  } else if (crash) {
-    anim.curve = world.flightCurve(crash.from, crash.to, Math.max(crash.fraction, 0.02));
-    world.showRoute(world.flightCurve(crash.from, crash.to), crash.to);
-    setState("Falling", msg.action_name);
+  anim = { msg, el: 0, dur: stepDuration(msg), flight: null, b0: prevBattery, b1: snap.battery, t0sim: prevT, t1sim: snap.t };
+  const leg = flight || crash;
+  if (leg) {
+    const delivered = ev.find((e) => e.type === "delivered");
+    anim.flight = world.planLeg({ from: leg.from, to: leg.to, drop: !!delivered, crash: crash ? Math.max(crash.fraction, crash.from === crash.to ? 0 : 0.02) : null });
+    anim.dur = anim.flight.dur;
+    anim.delivered = delivered;
+    if (leg.from !== leg.to) world.showRoute(anim.flight, leg.to);
+    if (flight && !SITES[flight.to].hub) showPopup(flight.to, flight.from, prevSnap);
+    setState(crash ? "Falling" : SITES[leg.from].hub ? "Launching" : "Flying", msg.action_name);
   } else if (ev.some((e) => e.type === "hold")) {
-    if (snap.loc !== 0) anim.loiter = world.sitePoint(snap.loc);
     setState(snap.loc !== 0 ? "Circling" : "Waiting", msg.action_name);
   } else if (ev.some((e) => e.type === "recharge")) {
-    world.setCharging(performance.now() + dur);
+    world.setCharging(true);
     setState("Charging", msg.action_name);
   } else if (ev.some((e) => e.type === "load")) {
     world.loadParcel();
@@ -203,7 +223,7 @@ function startStep(msg) {
     if (e.type === "request" && e.emergency) toast(`Emergency request at ${SITES[e.at].name}`, "emergency");
     if (e.type === "missed") toast(`Missed ${e.emergency ? "emergency" : "routine"} request at ${SITES[e.at].name}`, "bad");
   }
-  logDecision(msg);
+  logDecision({ reward: 0 });
 }
 
 function finishStep() {
@@ -212,70 +232,52 @@ function finishStep() {
   const snap = msg.snapshot;
   world.showRoute(null);
   world.showPopup(null);
+  world.setCharging(false);
+  const down = (snap.events || []).some((e) => e.type === "crash");
   for (const e of snap.events || []) {
-    if (e.type === "delivered") { world.dropParcel(e.at, e.emergency); toast(`Delivered to ${SITES[e.at].name}`, "good"); }
+    if (e.type === "delivered" && !anim.toasted) toast(`Delivered to ${SITES[e.at].name}`, "good");
     if (e.type === "wasted") toast(`Wasted trip, ${e.reason}`);
-    if (e.type === "crash") { world.smoke(world.drone.position.clone()); toast("Battery empty, drone down", "bad"); setState("Down", msg.action_name); }
+    if (e.type === "crash") { toast("Battery empty, drone down", "bad"); setState("Down", msg.action_name); }
     if (e.type === "stranded") toast("Shift ended away from the hub", "bad");
     if (e.type === "shift_end") { toast(`Shift over, return ${signed(snap.total_reward)}`, "good"); setState("Shift over", msg.action_name); }
   }
-  if (!anim.curve && !anim.loiter && !(snap.events || []).some((e) => e.type === "crash")) world.placeDrone(snap.loc);
-  if ($("state").textContent === "Flying") setState(snap.loc === 0 ? "At hub" : "On site", msg.action_name);
+  if (!down) world.idleAt(snap.loc); // circle the centre, or back into the charging dock
+  if (["Flying", "Launching", "Landing", "Dropping", "Caught"].includes($("state").textContent)) setState(snap.loc === 0 ? "At hub" : "Circling", msg.action_name);
   setHud(snap);
   setRequests(snap);
+  logDecision(msg); // the reward shows when it is earned, with the return
   prevBattery = snap.battery;
   prevT = snap.t;
   prevSnap = snap;
   anim = null;
+  played(msg);
 }
 
 function tickStep(now, dt) {
   if (!world.isReady()) return; // the map is still loading
   if (!anim && queue.length) startStep(queue.shift());
   if (!anim) return;
-  const k = Math.min((now - anim.t0) / anim.dur, 1);
-  if (!anim.reset) {
+  world.setRate(speed * catchUp());
+  anim.el += dt * 1000 * speed * catchUp();
+  let k = Math.min(anim.el / anim.dur, 1);
+  if (anim.flight) {
+    const st = world.followFlight(anim.flight, anim.el);
+    for (const e of st.events) {
+      if (e === "launch") setState("Flying", anim.msg.action_name);
+      if (e === "approach") setState(anim.flight.kind === "land" ? "Landing" : "Dropping", anim.msg.action_name);
+      if (e === "drop" && anim.delivered) { toast(`Delivered to ${SITES[anim.delivered.at].name}`, "good"); anim.toasted = true; }
+      if (e === "capture") setState("Caught", anim.msg.action_name);
+    }
+    k = Math.min(k, 1);
+    if (!anim.reset) { // the shift clock and battery follow the drone along its leg
+      setBattery(anim.b0 + (anim.b1 - anim.b0) * st.frac);
+      setClock(anim.t0sim + (anim.t1sim - anim.t0sim) * st.frac, anim.msg.snapshot.shift_minutes);
+    }
+  } else if (!anim.reset) {
     setBattery(anim.b0 + (anim.b1 - anim.b0) * k);
     setClock(anim.t0sim + (anim.t1sim - anim.t0sim) * k, anim.msg.snapshot.shift_minutes);
   }
-  if (anim.curve) {
-    const e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
-    world.flyDrone(anim.curve.getPointAt(e), anim.curve.getPointAt(Math.min(e + 0.01, 1)), dt);
-  } else if (anim.loiter) {
-    const a = (now / 1000) * 1.2, L = anim.loiter;
-    const p = { x: L.x + Math.cos(a) * 1.5, y: L.y + 0.6, z: L.z + Math.sin(a) * 1.5 };
-    const q = { x: L.x + Math.cos(a + 0.15) * 1.5, y: L.y + 0.6, z: L.z + Math.sin(a + 0.15) * 1.5 };
-    world.flyDrone(new world.drone.position.constructor(p.x, p.y, p.z), new world.drone.position.constructor(q.x, q.y, q.z), dt);
-  }
   if (k >= 1) finishStep();
-}
-
-// ---------------------------------------------------------------- minimap
-// the location card's thumbnail: routes from the hub, the sites, the drone's pin
-const MAP_W = 220, MAP_H = 120, MAP_KM = 27;
-const mx = (x) => MAP_W / 2 + (x / MAP_KM) * (MAP_H / 2) * 1.15;
-const my = (y) => MAP_H / 2 - (y / MAP_KM) * (MAP_H / 2) * 1.15 + 8;
-let mapPin = null;
-function drawMinimap() {
-  const svg = $("minimap");
-  const NS = "http://www.w3.org/2000/svg";
-  const el = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); svg.append(e); return e; };
-  el("rect", { width: MAP_W, height: MAP_H, fill: "rgba(255,255,255,0.02)" });
-  for (let i = -4; i <= 4; i++) { // a faint street grid
-    el("line", { x1: mx(i * 7) - 60, y1: 0, x2: mx(i * 7) + 60, y2: MAP_H, stroke: "rgba(0,0,0,0.35)", "stroke-width": 3 });
-    el("line", { x1: 0, y1: my(i * 7) + 30, x2: MAP_W, y2: my(i * 7) - 30, stroke: "rgba(0,0,0,0.3)", "stroke-width": 2 });
-  }
-  const hub = SITES[0];
-  for (const s of SITES.slice(1)) el("line", { x1: mx(hub.x), y1: my(hub.y), x2: mx(s.x), y2: my(s.y), stroke: "rgba(255,255,255,0.22)", "stroke-width": 1, "stroke-dasharray": "2 3" });
-  for (const s of SITES) el("circle", { cx: mx(s.x), cy: my(s.y), r: s.hub ? 3 : 2.2, fill: "rgba(255,255,255,0.6)" });
-  mapPin = document.createElementNS(NS, "g");
-  mapPin.innerHTML = `<circle r="11" fill="rgba(255,255,255,0.14)" stroke="rgba(255,255,255,0.5)"/><circle r="5.5" fill="#f4f5f3"/><circle r="2.4" fill="#121414"/>`;
-  svg.append(mapPin);
-}
-function updateMinimap() {
-  if (!mapPin) return;
-  const p = world.drone.position; // world x east, z south
-  mapPin.setAttribute("transform", `translate(${mx(p.x).toFixed(1)} ${my(-p.z).toFixed(1)})`);
 }
 
 let last = performance.now();
@@ -284,8 +286,7 @@ function frame(now) {
   const dt = Math.min((now - last) / 1000, 0.05);
   last = now;
   tickStep(now, dt);
-  world.update(now, dt, follow);
-  updateMinimap();
+  world.update(now, dt);
 }
 
 // ---------------------------------------------------------------- data
@@ -312,8 +313,6 @@ function onScene(sc) {
     $("site-list").append(...SITES.map((s) => Object.assign(document.createElement("option"), { value: s.name })));
     world.attachPopup($("popup"));
     world.build(SITES);
-    drawMinimap();
-    setPosition(0);
     built = true;
   }
   const agent = sc.agent || "";

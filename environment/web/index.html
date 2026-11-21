@@ -49,10 +49,16 @@
     <datalist id="site-list"></datalist>
   </label>
   <div class="tray glass">
-    <button type="button" id="btn-follow" aria-pressed="false">Follow</button>
+    <button type="button" id="btn-follow" aria-pressed="false" title="Fly behind the drone (F)">Follow</button>
     <button type="button" id="btn-orbit" aria-pressed="false">Orbit</button>
     <button type="button" id="btn-hub">Hub</button>
     <button type="button" id="btn-labels" aria-pressed="true">Labels</button>
+    <div class="speed" id="speed" role="group" aria-label="Playback speed">
+    <button type="button" data-speed="0.5" aria-pressed="false">½×</button>
+    <button type="button" data-speed="1" aria-pressed="true">1×</button>
+    <button type="button" data-speed="2" aria-pressed="false">2×</button>
+    <button type="button" data-speed="4" aria-pressed="false">4×</button>
+    </div>
   </div>
 </div>
 
@@ -66,63 +72,44 @@
   </button>
 </div>
 
-<!-- bottom: the dock of cards -->
-<section class="dock" aria-label="Shift">
-  <article class="card location">
-    <svg class="minimap" id="minimap" viewBox="0 0 220 120" preserveAspectRatio="xMidYMid slice" aria-hidden="true"></svg>
-    <header><span class="eyebrow">Location</span><span class="arrow" aria-hidden="true"></span></header>
-    <dl class="fields">
-      <div><dt>Position</dt><dd id="f-pos">Muhanga Hub</dd></div>
-      <div><dt>Elevation</dt><dd id="f-elev">1,850 m</dd></div>
-      <div><dt>District</dt><dd>Muhanga</dd></div>
-      <div><dt>Flown</dt><dd id="f-km">0 km</dd></div>
-    </dl>
-  </article>
-
-  <article class="card status">
-    <header><span class="eyebrow">Shift status</span><span class="arrow" aria-hidden="true"></span></header>
-    <div class="beacon" aria-hidden="true">
-      <span class="state" id="state">At hub</span>
-      <i></i><i></i><i></i><i></i>
-    </div>
-    <dl class="fields">
-      <div><dt>Clock</dt><dd id="clock">08:00</dd></div>
-      <div><dt>Seed</dt><dd id="f-seed">–</dd></div>
-      <div><dt>Action</dt><dd id="f-action">Waiting</dd></div>
-      <div><dt>End</dt><dd>16:00</dd></div>
-    </dl>
-  </article>
-
-  <article class="card cost">
-    <header><span class="eyebrow">Return</span><span class="arrow" aria-hidden="true"></span></header>
-    <div class="ticks" id="ticks" aria-hidden="true"></div>
-    <div class="cost-row">
-      <span class="big num" id="score">0.0</span>
-      <span class="pie" id="pie" role="img" aria-label="Shift 0% done"></span>
-    </div>
-  </article>
-
-  <div class="tiles">
-    <div class="tile glass"><span class="eyebrow">Battery</span><span class="num" id="battery">100%</span></div>
-    <div class="tile glass"><span class="eyebrow">Cargo</span><span class="num" id="cargo">0 of 2</span></div>
-    <div class="tile glass"><span class="eyebrow">Wind</span><span class="num" id="wind">0 km/h</span></div>
+<!-- bottom: everything about the shift in one panel -->
+<section class="hud glass" aria-label="Shift">
+  <div class="seg status">
+    <span class="eyebrow"><span class="dot" id="state-dot"></span><span id="state">At hub</span></span>
+    <span class="val"><span id="f-action">Waiting</span><span class="reward zero num" id="f-reward"></span></span>
   </div>
-
-  <article class="card details">
-    <header><span class="eyebrow">Deliveries</span><span class="arrow" aria-hidden="true"></span></header>
-    <div class="radar" aria-hidden="true"><span class="radar-tag" id="radar-site">Muhanga Hub</span></div>
-    <dl class="fields">
-      <div><dt>Emergency</dt><dd class="num" id="d-e">0</dd></div>
-      <div><dt>Missed</dt><dd class="num" id="m-e">0</dd></div>
-      <div><dt>Routine</dt><dd class="num" id="d-r">0</dd></div>
-      <div><dt>Missed</dt><dd class="num" id="m-r">0</dd></div>
-    </dl>
-  </article>
-
-  <article class="card decisions">
-    <header><span class="eyebrow">Decisions</span><span class="arrow" aria-hidden="true"></span></header>
-    <ol id="log"></ol>
-  </article>
+  <div class="seg">
+    <span class="eyebrow">Clock</span>
+    <span class="val num" id="clock">08:00</span>
+    <span class="bar" id="shift-bar" role="img" aria-label="Shift 0% done"><i></i></span>
+  </div>
+  <div class="seg">
+    <span class="eyebrow">Return</span>
+    <span class="val big num" id="score">0.0</span>
+  </div>
+  <div class="seg">
+    <span class="eyebrow">Battery</span>
+    <span class="val num" id="battery">100%</span>
+    <span class="bar" id="battery-bar"><i></i></span>
+  </div>
+  <div class="seg cargo">
+    <span class="eyebrow">Cargo</span>
+    <span class="val num" id="cargo">0 of 2</span>
+  </div>
+  <div class="seg wind">
+    <span class="eyebrow">Wind</span>
+    <span class="val num" id="wind">0 km/h</span>
+  </div>
+  <div class="seg">
+    <span class="eyebrow">Emergencies</span>
+    <span class="val num" id="d-e">0</span>
+    <span class="sub num" id="m-e">0 missed</span>
+  </div>
+  <div class="seg routine">
+    <span class="eyebrow">Routine</span>
+    <span class="val num" id="d-r">0</span>
+    <span class="sub num" id="m-r">0 missed</span>
+  </div>
 </section>
 
 <!-- the destination card, anchored over a site by world.js -->

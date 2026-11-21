@@ -15,7 +15,7 @@
     "seed": 0,
     "note": "higher learning rate"
   },
-  "wall_s": 315.3,
+  "wall_s": 253.4,
   "eval": {
     "default": {
       "return_mean": -83.4,
@@ -66,6 +66,6 @@
       "mean_emergency_wait": 0.0
     }
   },
-  "final_train_return": -83.58,
-  "episodes": 6339
+  "final_train_return": -81.78,
+  "episodes": 6460
 }

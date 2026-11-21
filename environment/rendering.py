@@ -7,6 +7,8 @@ exposes the integration points a real deployment would use:
     GET  /scene       static map: sites, coordinates, elevations, action names
     GET  /state       the latest step message (JSON)
     GET  /events      live stream of step messages (text/event-stream)
+    POST /api/ack     {"episode": int, "step": int}: the page finished playing
+                      that step, so the agent may take its next decision
     POST /api/act     {"observation": [38 floats], "action_mask": [10 ints]}
                       -> {"action": int, "name": str} from the loaded policy
 
@@ -82,6 +84,8 @@ class Viewer:
         self.scene: dict | None = None
         self.latest: dict | None = None
         self.policy_fn = policy_fn
+        self.played = (0, 0)  # (episode, step) the page last finished animating
+        self.played_cv = threading.Condition()
         handler = partial(_Handler, viewer=self, directory=str(WEB_DIR))
         self.server = _QuietServer(("127.0.0.1", port), handler)
         self.server.daemon_threads = True
@@ -115,6 +119,27 @@ class Viewer:
                     return True
             time.sleep(0.1)
         return False
+
+    def ack(self, episode: int, step: int):
+        with self.played_cv:
+            self.played = max(self.played, (episode, step))
+            self.played_cv.notify_all()
+
+    def wait_for_playback(self, episode: int, step: int, fallback_s: float, timeout: float = 120.0):
+        """Block until a page has finished animating this step, so the page sets
+        the pace (and its speed buttons work). With no page open, wait
+        fallback_s instead so the terminal log stays readable."""
+        end = time.time() + timeout
+        with self.played_cv:
+            while self.played < (episode, step) and time.time() < end:
+                with self.lock:
+                    watching = bool(self.clients)
+                if not watching:
+                    break
+                self.played_cv.wait(0.25)
+            else:
+                return
+        time.sleep(fallback_s)
 
     def close(self):
         self.server.shutdown()
@@ -151,6 +176,14 @@ class _Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self):
+        if self.path == "/api/ack":
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                req = json.loads(self.rfile.read(n))
+                self.viewer.ack(int(req["episode"]), int(req["step"]))
+                return self._json({"ok": True})
+            except Exception as e:
+                return self._json({"error": str(e)}, 400)
         if self.path != "/api/act":
             return self._json({"error": "not found"}, 404)
         if self.viewer.policy_fn is None:
@@ -175,6 +208,8 @@ class _Handler(SimpleHTTPRequestHandler):
         try:
             if self.viewer.scene:
                 q.put(("scene", json.dumps(self.viewer.scene)))
+            if self.viewer.latest:  # a reloaded page picks up the step the agent is waiting on
+                q.put(("step", json.dumps(self.viewer.latest)))
             while True:
                 try:
                     kind, data = q.get(timeout=10)

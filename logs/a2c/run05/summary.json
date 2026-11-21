@@ -15,7 +15,7 @@
     "seed": 0,
     "note": "no entropy bonus"
   },
-  "wall_s": 411.3,
+  "wall_s": 252.7,
   "eval": {
     "default": {
       "return_mean": -83.4,
@@ -66,6 +66,6 @@
       "mean_emergency_wait": 0.0
     }
   },
-  "final_train_return": -82.76,
-  "episodes": 6532
+  "final_train_return": -83.32,
+  "episodes": 6529
 }
