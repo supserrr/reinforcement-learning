@@ -207,6 +207,17 @@ button { cursor: pointer; }
 .site-label .s .dot { width: 6px; height: 6px; }
 .site-label:has(.s:not(:empty)) .tag { border-radius: 14px; }
 .labels-off .site-label .tag { display: none; }
+/* a label or card whose ground is behind a hill, or during a cinematic shot, fades away */
+.site-label, .popup { transition: opacity 0.25s ease; }
+.site-label.hidden, .popup.hidden { opacity: 0; }
+
+/* the drone on the map: a white disc with the aircraft turned to its heading, over the pins */
+.drone-marker { pointer-events: none; }
+.drone-marker .arrow {
+  display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%;
+  background: #f4f5f3; color: #121414;
+  box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.18), 0 4px 10px rgba(0, 0, 0, 0.5);
+}
 
 /* the destination card over a site: glass card, white pill with a knob */
 .popup { width: 236px; padding-bottom: 30px; pointer-events: none; }

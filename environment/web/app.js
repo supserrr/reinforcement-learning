@@ -3,11 +3,9 @@
 // camera tools, the agent tabs, one panel with the shift, the destination card
 // over the map and toasts.
 import { createWorld } from "./world.js";
-import { liquidGlass } from "./glass.js";
 
 const world = createWorld(document.getElementById("scene"));
 window.__world = world; // for debugging from the console
-document.querySelectorAll(".hud, .tray, .search, .popup-card").forEach(liquidGlass);
 let SITES = [];
 
 // ---------------------------------------------------------------- HUD
@@ -50,6 +48,13 @@ function setClock(t, shift) {
   $("shift-bar").firstChild.style.width = `${(p * 100).toFixed(1)}%`;
   $("shift-bar").setAttribute("aria-label", `Shift ${Math.round(p * 100)}% done`);
   world.setTime(t);
+}
+// how much faster than real life the page is playing: flights show their own
+// time-lapse, ground steps the shift minutes they cover
+let warpShown = "";
+function setWarp(x) {
+  const t = !isFinite(x) || x <= 0 ? "" : x < 1.5 ? "real time" : `${x < 10 ? x.toFixed(1) : Math.round(x)}× real time`;
+  if (t !== warpShown) { warpShown = t; $("warp").textContent = t; }
 }
 function setHud(snap) {
   setClock(snap.t, snap.shift_minutes);
@@ -269,11 +274,13 @@ function tickStep(now, dt) {
       if (e === "capture") setState("Caught", anim.msg.action_name);
     }
     k = Math.min(k, 1);
+    setWarp(st.warp * speed * catchUp());
     if (!anim.reset) { // the shift clock and battery follow the drone along its leg
       setBattery(anim.b0 + (anim.b1 - anim.b0) * st.frac);
       setClock(anim.t0sim + (anim.t1sim - anim.t0sim) * st.frac, anim.msg.snapshot.shift_minutes);
     }
   } else if (!anim.reset) {
+    setWarp(((anim.t1sim - anim.t0sim) * 60000) / anim.dur * speed * catchUp());
     setBattery(anim.b0 + (anim.b1 - anim.b0) * k);
     setClock(anim.t0sim + (anim.t1sim - anim.t0sim) * k, anim.msg.snapshot.shift_minutes);
   }

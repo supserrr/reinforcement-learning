@@ -159,6 +159,7 @@ export function createWorld(container) {
       const cl = new THREE.Group();
       cl.position.set(Math.cos(a) * dist, 2.5 + rr() * 0.9, Math.sin(a) * dist);
       const size = 0.7 + rr() * 1.7, k = 5 + Math.floor(rr() * 6);
+      cl.userData.size = size;
       for (let j = 0; j < k; j++) {
         const sp = new THREE.Sprite(cloudMat);
         sp.position.set((rr() - 0.5) * size * 1.2, (rr() - 0.3) * size * 0.16, (rr() - 0.5) * size * 1.2);
@@ -291,7 +292,10 @@ export function createWorld(container) {
     labels.setSize(window.innerWidth, window.innerHeight);
     grade.uniforms.uRes.value.set(window.innerWidth * composer._pixelRatio, window.innerHeight * composer._pixelRatio);
   }
-  window.addEventListener("resize", resize);
+  window.addEventListener("resize", () => {
+    resize();
+    if (ready && atHome) { fitHome(); if (mode === "map" && !camMove) { controls.target.copy(HOME.target); camera.position.copy(HOME.position); } }
+  });
   resize();
 
   // ---------------------------------------------------------- map data and the Blender models
@@ -309,9 +313,23 @@ export function createWorld(container) {
       tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
       return { ...L, tex, h: new Uint16Array(buf) };
     };
-    const [inner, outer] = await Promise.all([layer(meta.layers.inner), layer(meta.layers.outer)]);
-    MAP = { meta, inner, outer };
+    const B = meta.layers.inner.buildings, W = meta.layers.inner.woods, K = meta.layers.outer.lake;
+    const [inner, outer, buildings, woods, lake] = await Promise.all([
+      layer(meta.layers.inner), layer(meta.layers.outer),
+      B ? fetch(`map/${B.file}`).then((r) => r.arrayBuffer()) : null,
+      W ? loadImageData(`map/${W.mask}`) : null,
+      K ? loader.loadAsync(`map/${K.mask}`) : null,
+    ]);
+    MAP = { meta, inner, outer, buildings: buildings && { data: new DataView(buildings), count: B.count, origin: B.origin_m }, woods, lake: lake && { tex: lake, surface: K.surface_m } };
   })();
+  async function loadImageData(url) {
+    const img = await new THREE.ImageLoader().loadAsync(url);
+    const c = document.createElement("canvas");
+    c.width = img.width; c.height = img.height;
+    const g = c.getContext("2d", { willReadFrequently: true });
+    g.drawImage(img, 0, 0);
+    return { w: img.width, h: img.height, data: g.getImageData(0, 0, img.width, img.height).data };
+  }
 
   // bilinear elevation (metres) from one layer; x east, z south, in km
   function sample(L, x, z) {
@@ -326,7 +344,9 @@ export function createWorld(container) {
   function elevation(x, z) {
     let m = rawElevation(x, z);
     for (const p of pads) {
-      const d = Math.hypot(x - p.x, z - p.z);
+      const dx = x - p.x, dz = z - p.z;
+      if (dx > p.r1 || dx < -p.r1 || dz > p.r1 || dz < -p.r1) continue;
+      const d = Math.hypot(dx, dz);
       if (d < p.r1) m += (p.m - m) * (1 - smoothstep(p.r0, p.r1, d));
     }
     return m;
@@ -347,24 +367,60 @@ export function createWorld(container) {
     uSitePos: { value: [] },
     uSiteState: { value: [] },   // x: request 0 none, 1 routine, 2 emergency; y: hub; z: charging; w: destination
     uDrone: { value: new THREE.Vector3(0, 0, 0) },
+    uOverlay: { value: 1 },      // the map markings fade out in the chase view
   };
+  // cloud shadows: the cumulus sprites, cast along the sun onto a texture the ground samples
+  const CLOUD_SPAN = 150;        // km across the shadow texture, centred on the map
+  const shadowCanvas = document.createElement("canvas");
+  shadowCanvas.width = shadowCanvas.height = 256;
+  const cloudShadowTex = new THREE.CanvasTexture(shadowCanvas);
+  const shade = { uCloudShadow: { value: cloudShadowTex }, uShadowAmt: { value: 0 }, uCloudSpan: { value: CLOUD_SPAN } };
   const terrainHead = (withOverlay) => /* glsl */ `
     varying vec3 vWPos;
     uniform float uTime; uniform vec2 uWind; uniform float uWindStrength; uniform vec2 uCloudOffset;
+    uniform sampler2D uCloudShadow; uniform float uShadowAmt; uniform float uCloudSpan;
     float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
     float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f*f*(3.-2.*f);
       return mix(mix(hash12(i), hash12(i+vec2(1,0)), u.x), mix(hash12(i+vec2(0,1)), hash12(i+vec2(1,1)), u.x), u.y); }
     float cloudShade(vec3 p){
-      vec2 q = (p.xz + uCloudOffset) * .03;
-      float n = vnoise(q) * .6 + vnoise(q * 2.1 + 7.) * .3 + vnoise(q * 4.3 + 3.) * .1;
-      return 1. - .38 * smoothstep(.5, .78, n);
+      float s = texture2D(uCloudShadow, p.xz / uCloudSpan + .5).r;
+      return 1. - .55 * s * uShadowAmt;
+    }
+    // Close up, the 10 m imagery becomes a patchwork of small plots: each its own
+    // tone and furrow direction, with darker paths between them, and mottled grass.
+    vec3 groundDetail(vec3 c, vec3 p, float dc){
+      float fade = smoothstep(3.2, .35, dc);
+      if (fade <= 0.) return c;
+      vec2 q = p.xz * 1000.;                                   // metres
+      vec2 g = q / 38., ig = floor(g), fg = fract(g);
+      float d1 = 9., d2 = 9.; vec2 id = vec2(0.);
+      for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+        vec2 o = vec2(float(i), float(j));
+        vec2 r = o + vec2(hash12(ig + o), hash12(ig + o + 31.7)) * .9 - fg;
+        float dd = dot(r, r);
+        if (dd < d1) { d2 = d1; d1 = dd; id = ig + o; } else if (dd < d2) d2 = dd;
+      }
+      float border = sqrt(d2) - sqrt(d1);
+      float l = dot(c, vec3(.2126, .7152, .0722));
+      float field = smoothstep(.015, .05, l);                  // dense forest stays one canopy
+      float soil = smoothstep(.0, -.04, c.g - (c.r + c.b) * .5);
+      float ang = hash12(id + 7.1) * 3.1416;
+      float furrow = sin(dot(q, vec2(cos(ang), sin(ang))) * 2.3) * .5 + .5;
+      float mott = vnoise(q * .3) * .5 + vnoise(q * 1.6) * .3 + vnoise(q * 5.5) * .2;
+      vec3 tint = mix(vec3(1.), vec3(1.06, .97, .86), step(.7, hash12(id + 3.3)) * field); // some plots ripe or fallow
+      vec3 d = c * tint * (1. + (hash12(id) - .5) * .24 * field + (mott - .5) * .4 + (furrow - .5) * mix(.04, .14, soil) * field);
+      // a path or hedge along some plot edges only, so the plots never read as a grid
+      float hedge = step(.55, hash12(id + 11.9)) * (1. - smoothstep(.0, .03, border));
+      d *= 1. - .12 * hedge * field;
+      return mix(c, d, fade);
     }
     ${withOverlay ? `
-    uniform vec2 uSitePos[${SITES.length}]; uniform vec4 uSiteState[${SITES.length}]; uniform vec3 uDrone;
+    uniform vec2 uSitePos[${SITES.length}]; uniform vec4 uSiteState[${SITES.length}]; uniform vec3 uDrone; uniform float uOverlay;
     float ringLine(float r, float R, float px, float w){ return 1. - smoothstep(px * w * .5, px * (w * .5 + 1.), abs(r - R)); }
     float dashes(vec2 d, float n, float spin){ return step(.42, fract(atan(d.y, d.x) / 6.28318 * n + spin)); }
     // map overlays painted onto the ground, so they follow every hill
     vec3 mapOverlay(vec3 p){
+      if (uOverlay <= 0.) return vec3(0.);
       vec3 e = vec3(0.);
       float px = length(fwidth(p.xz));
       for (int i = 0; i < ${SITES.length}; i++) {
@@ -390,57 +446,132 @@ export function createWorld(container) {
       vec2 dd = p.xz - uDrone.xz;
       float rd = length(dd);
       e += vec3(1.) * (ringLine(rd, .28, px, 1.6) * .9 + exp(-rd * rd / .004) * 1.2);
-      return e;
+      return e * uOverlay;
     }` : ""}`;
 
   function terrainMaterial(tex, withOverlay) {
     const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.93, metalness: 0, envMapIntensity: 0.35 });
     mat.onBeforeCompile = (sh) => {
-      Object.assign(sh.uniforms, U, withOverlay ? overlay : {});
+      Object.assign(sh.uniforms, U, shade, withOverlay ? overlay : {});
       sh.vertexShader = sh.vertexShader
         .replace("#include <common>", "#include <common>\nvarying vec3 vWPos;")
         .replace("#include <worldpos_vertex>", "#include <worldpos_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;");
       sh.fragmentShader = sh.fragmentShader
         .replace("#include <common>", "#include <common>\n" + terrainHead(withOverlay))
-        // the photo already holds its own light: deepen it toward dark greens, and keep
-        // bright roofs and quarries well below white
+        // The photo is already a finished, contrasty picture. Read it back as ground
+        // albedo: compress the highlights so bare soil, roofs and silty rivers stay
+        // earthy instead of glowing white or yellow, and desaturate them a little.
         .replace("#include <map_fragment>", `#include <map_fragment>
-          { vec3 c = diffuseColor.rgb; float l = dot(c, vec3(.2126, .7152, .0722));
-            c = max(mix(vec3(l), c, 1.3), 0.); c = pow(c, vec3(1.28)) * 1.7; c = min(c / (1. + c * .8) * 1.3, vec3(.6)); diffuseColor.rgb = c; }
-          { // up close the 10 m imagery gets fine variation: plots, furrows, bare patches
-            float dc = distance(vWPos, cameraPosition);
-            float det = vnoise(vWPos.xz * 260.) * .55 + vnoise(vWPos.xz * 61.) * .45;
-            diffuseColor.rgb *= mix(1., .86 + .28 * det, smoothstep(2.5, .25, dc)); }`)
-        .replace("#include <lights_fragment_end>", "#include <lights_fragment_end>\nfloat cs = cloudShade(vWPos); reflectedLight.directDiffuse *= cs; reflectedLight.directSpecular *= cs; reflectedLight.indirectDiffuse *= mix(1., cs, .5);")
+          { vec3 c = max(diffuseColor.rgb, 0.); float l = dot(c, vec3(.2126, .7152, .0722));
+            c = mix(vec3(l), c, 1.12 - .45 * smoothstep(.1, .35, l));
+            c = min(c / (1. + 2.4 * l) * 1.3, vec3(.3));
+            diffuseColor.rgb = groundDetail(c, vWPos, distance(vWPos, cameraPosition)); }`)
+        .replace("#include <lights_fragment_end>", "#include <lights_fragment_end>\nfloat cs = cloudShade(vWPos); reflectedLight.directDiffuse *= cs; reflectedLight.directSpecular *= cs; reflectedLight.indirectDiffuse *= mix(1., cs, .4);")
         .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n" + (withOverlay ? "totalEmissiveRadiance += mapOverlay(vWPos);" : ""));
     };
     mat.customProgramCacheKey = () => (withOverlay ? `terrain-ov-${SITES.length}` : "terrain");
     return mat;
   }
 
-  function terrainMesh(L, segments, sink) {
-    const size = 2 * L.half_km;
-    const geo = new THREE.PlaneGeometry(size, size, segments, segments);
-    geo.rotateX(-Math.PI / 2);
-    const pos = geo.attributes.position;
-    const inH = MAP.inner.half_km;
+  // The inner map is 16 x 16 tiles of 4 km. Every tile has a coarse mesh, a
+  // point every 125 m; tiles near the camera and near what it looks at swap in
+  // a fine mesh at the elevation data's own 31 m. Skirts hide the small steps
+  // where a fine tile meets a coarse one. GRID holds the graded ground height
+  // at every fine point, so groundAt() matches the fine triangles exactly.
+  const TILES = 16, FINE = 128, COARSE = 32, MAX_FINE = 40, SKIRT = 0.04;
+  let GRID = null, GN = 0, GS = 0, GHALF = 0, innerMat = null;
+  const tiles = [];
+  function buildGrid() {
+    GHALF = MAP.inner.half_km; GN = TILES * FINE; GS = (2 * GHALF) / GN;
+    GRID = new Float32Array((GN + 1) * (GN + 1));
+    for (let iz = 0, k = 0; iz <= GN; iz++) {
+      const z = iz * GS - GHALF;
+      for (let ix = 0; ix <= GN; ix++, k++) GRID[k] = heightAt(ix * GS - GHALF, z);
+    }
+  }
+  const G = (ix, iz) => GRID[Math.min(Math.max(iz, 0), GN) * (GN + 1) + Math.min(Math.max(ix, 0), GN)];
+  function tileGeometry(tx, tz, seg) {
+    const step = FINE / seg, n = seg + 1, x0 = tx * FINE, z0 = tz * FINE;
+    const count = n * n + 4 * n;
+    const pos = new Float32Array(count * 3), nor = new Float32Array(count * 3), uv = new Float32Array(count * 2), idx = [];
+    let k = 0;
+    const put = (ix, iz, drop) => {
+      pos[k * 3] = ix * GS - GHALF; pos[k * 3 + 1] = G(ix, iz) - drop; pos[k * 3 + 2] = iz * GS - GHALF;
+      // the normal from the neighbours at this mesh's spacing, the same on both sides of a tile edge
+      const nx = G(ix - step, iz) - G(ix + step, iz), nz = G(ix, iz - step) - G(ix, iz + step), ny = 2 * step * GS;
+      const l = Math.hypot(nx, ny, nz);
+      nor[k * 3] = nx / l; nor[k * 3 + 1] = ny / l; nor[k * 3 + 2] = nz / l;
+      uv[k * 2] = ix / GN; uv[k * 2 + 1] = 1 - iz / GN;
+      return k++;
+    };
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) put(x0 + i * step, z0 + j * step, 0);
+    for (let j = 0; j < seg; j++) for (let i = 0; i < seg; i++) {
+      const a = j * n + i, b = a + n, c = b + 1, d = a + 1;
+      idx.push(a, b, d, b, c, d); // the same diagonal groundAt assumes
+    }
+    // skirts round the edge, wound both ways so they show from either side
+    for (const [i0, j0, di, dj] of [[0, 0, 1, 0], [0, seg, 1, 0], [0, 0, 0, 1], [seg, 0, 0, 1]]) {
+      const top = [], low = [];
+      for (let s = 0; s <= seg; s++) {
+        const i = i0 + di * s, j = j0 + dj * s;
+        top.push(j * n + i);
+        low.push(put(x0 + i * step, z0 + j * step, SKIRT));
+      }
+      for (let s = 0; s < seg; s++) idx.push(top[s], low[s], top[s + 1], top[s + 1], low[s], low[s + 1], top[s], top[s + 1], low[s], top[s + 1], low[s + 1], low[s]);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
+    g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+    g.setIndex(idx);
+    g.computeBoundingSphere();
+    return g;
+  }
+  function tileMesh(geo) {
+    const m = new THREE.Mesh(geo, innerMat);
+    m.castShadow = m.receiveShadow = true;
+    scene.add(m);
+    return m;
+  }
+  function buildTerrain() {
+    buildGrid();
+    innerMat = terrainMaterial(MAP.inner.tex, true);
+    for (let tz = 0; tz < TILES; tz++) for (let tx = 0; tx < TILES; tx++)
+      tiles.push({ tx, tz, coarse: tileMesh(tileGeometry(tx, tz, COARSE)), fine: null, used: 0,
+        x0: tx * FINE * GS - GHALF, z0: tz * FINE * GS - GHALF, x1: (tx + 1) * FINE * GS - GHALF, z1: (tz + 1) * FINE * GS - GHALF });
+    // the outer map: the hills out to Lake Kivu, sunk out of sight under the inner one
+    const geo = new THREE.PlaneGeometry(2 * MAP.outer.half_km, 2 * MAP.outer.half_km, 400, 400).rotateX(-Math.PI / 2);
+    const pos = geo.attributes.position, inH = MAP.inner.half_km;
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i), z = pos.getZ(i);
-      let y = heightAt(x, z);
-      if (sink && Math.abs(x) < inH - 0.01 && Math.abs(z) < inH - 0.01) y -= 0.15; // hidden under the fine map
-      pos.setY(i, y);
+      pos.setY(i, heightAt(x, z) - (Math.abs(x) < inH - 0.01 && Math.abs(z) < inH - 0.01 ? 0.15 : 0));
     }
     geo.computeVertexNormals();
-    return geo;
-  }
-
-  function buildTerrain() {
-    const inner = new THREE.Mesh(terrainMesh(MAP.inner, 640, false), terrainMaterial(MAP.inner.tex, true));
-    inner.receiveShadow = true;
-    inner.castShadow = true;
-    const outer = new THREE.Mesh(terrainMesh(MAP.outer, 400, true), terrainMaterial(MAP.outer.tex, false));
+    const outer = new THREE.Mesh(geo, terrainMaterial(MAP.outer.tex, false));
     outer.receiveShadow = true;
-    scene.add(inner, outer);
+    scene.add(outer);
+  }
+  const rectDist = (t, x, z) => Math.hypot(Math.max(t.x0 - x, 0, x - t.x1), Math.max(t.z0 - z, 0, z - t.z1));
+  // fine tiles round the camera and the point it looks at, built two a frame, nearest first
+  function updateTerrainLOD(cam, focus, low, now) {
+    const want = [];
+    for (const t of tiles) {
+      const d = Math.min(rectDist(t, cam.x, cam.z) * 1.4, focus ? rectDist(t, focus.x, focus.z) : Infinity);
+      t.want = low && d < 5.5;
+      if (t.want) { t.used = now; if (!t.fine) want.push([d, t]); }
+    }
+    want.sort((a, b) => a[0] - b[0]);
+    for (const [, t] of want.slice(0, 2)) t.fine = tileMesh(tileGeometry(t.tx, t.tz, FINE));
+    const built = tiles.filter((t) => t.fine);
+    if (built.length > MAX_FINE) {
+      built.sort((a, b) => a.used - b.used);
+      for (const t of built.slice(0, built.length - MAX_FINE)) { scene.remove(t.fine); t.fine.geometry.dispose(); t.fine = null; }
+    }
+    for (const t of tiles) {
+      const fine = !!(t.want && t.fine);
+      if (t.fine) t.fine.visible = fine;
+      t.coarse.visible = !fine;
+    }
   }
 
   // ---------------------------------------------------------- Lake Kivu
@@ -459,17 +590,23 @@ export function createWorld(container) {
     g.putImageData(img, 0, 0);
     const t = new THREE.CanvasTexture(c);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(90, 140);
+    t.repeat.set(260, 260);
     return t;
   }
   function buildWater() {
-    // the lake lies 45-75 km west; this sheet only shows where the ground is below its surface
+    // The lake is drawn only where map/outer-lake.png marks it (scripts/bake_map.py):
+    // the level ground joined to the lake, so its shores follow the real ones.
+    if (!MAP.lake) return;
     waterNormal = rippleTexture();
-    const water = new THREE.Mesh(new THREE.PlaneGeometry(72, 106),
+    const S = 2 * MAP.outer.half_km;
+    MAP.lake.tex.colorSpace = THREE.NoColorSpace;
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(S, S),
       new THREE.MeshPhysicalMaterial({ color: "#0c1a1f", roughness: 0.16, metalness: 0, normalMap: waterNormal,
-        normalScale: new THREE.Vector2(0.25, 0.25), envMapIntensity: 0.9, transparent: true, opacity: 0.82 }));
+        normalScale: new THREE.Vector2(0.25, 0.25), envMapIntensity: 0.9, transparent: true, opacity: 0.86,
+        alphaMap: MAP.lake.tex, alphaTest: 0.35, depthWrite: false }));
     water.rotation.x = -Math.PI / 2;
-    water.position.set(-64, metresToY(KIVU_M + 6), 5);
+    water.position.set(0, metresToY(MAP.lake.surface + 7), 0);
+    water.userData.noAO = true;
     scene.add(water);
   }
 
@@ -534,7 +671,7 @@ export function createWorld(container) {
       label.center.set(0, 0.5);
       label.position.set(s.wx, s.h + 0.05, s.wz);
       scene.add(label);
-      siteObjs.push({ ...s, index: i, glow, request: null, chargingUntil: 0 });
+      siteObjs.push({ ...s, index: i, glow, label, request: null, chargingUntil: 0 });
     });
   }
 
@@ -542,7 +679,7 @@ export function createWorld(container) {
   // A high-wing fixed-wing delivery drone: teardrop pod, thin tail boom with a
   // swept fin, and a pylon over the wing carrying a nacelle with a tractor and a
   // pusher propeller. Packages drop by parachute from the belly. Built in
-  // metres facing +z, then scaled to the map (wingspan ~1.3 km of map).
+  // metres facing +z; update() scales it to the map's kilometres.
   const drone = new THREE.Group();
   const navLights = [];
   const props = [];
@@ -734,21 +871,19 @@ export function createWorld(container) {
   const DRONE_M = 0.001;   // the drone model is built in metres
   const dockQuat = new THREE.Quaternion(), cradleQuat = new THREE.Quaternion();
 
-  // terrain height exactly as the inner mesh draws it (its triangles, not the
+  // terrain height exactly as the fine inner tiles draw it (their triangles, not the
   // smooth heightmap), so buildings, parcels and the camera meet the visible ground
-  const SEG = 640;
   function groundAt(x, z) {
-    const half = MAP.inner.half_km, s = (2 * half) / SEG;
-    if (Math.abs(x) >= half - s || Math.abs(z) >= half - s) return heightAt(x, z);
-    const fx = (x + half) / s, fz = (z + half) / s;
-    const ix = Math.floor(fx), iz = Math.floor(fz), u = fx - ix, v = fz - iz;
-    const x0 = ix * s - half, z0 = iz * s - half;
-    const ha = heightAt(x0, z0), hb = heightAt(x0, z0 + s), hc = heightAt(x0 + s, z0 + s), hd = heightAt(x0 + s, z0);
+    if (!GRID || Math.abs(x) >= GHALF - GS || Math.abs(z) >= GHALF - GS) return heightAt(x, z);
+    const fx = (x + GHALF) / GS, fz = (z + GHALF) / GS;
+    const ix = Math.floor(fx), iz = Math.floor(fz), u = fx - ix, v = fz - iz, i = iz * (GN + 1) + ix;
+    const ha = GRID[i], hb = GRID[i + GN + 1], hc = GRID[i + GN + 2], hd = GRID[i + 1];
     return u + v <= 1 ? ha + (hd - ha) * u + (hb - ha) * v : hc + (hb - hc) * (1 - u) + (hd - hc) * (1 - v);
   }
-  // the satellite image's colour at a point (sRGB 0..1), to grow villages and trees that match it
+  // the satellite image's colour at a point (sRGB 0..1), read at 21 m a pixel, to grow
+  // villages and trees that match it
   let imgData = null;
-  const IMG_N = 1024;
+  const IMG_N = 3072;
   function readImagery() {
     const c = document.createElement("canvas");
     c.width = c.height = IMG_N;
@@ -756,14 +891,36 @@ export function createWorld(container) {
     g.drawImage(MAP.inner.tex.image, 0, 0, IMG_N, IMG_N);
     imgData = g.getImageData(0, 0, IMG_N, IMG_N).data;
   }
-  function colorAt(x, z, out) {
-    if (!imgData) { out[0] = out[1] = out[2] = 0.3; return out; }
+  const pixel = (x, z) => {
     const h = MAP.inner.half_km;
     const px = Math.min(Math.max(Math.floor(((x + h) / (2 * h)) * IMG_N), 0), IMG_N - 1);
     const py = Math.min(Math.max(Math.floor(((z + h) / (2 * h)) * IMG_N), 0), IMG_N - 1);
-    const i = (py * IMG_N + px) * 4;
+    return (py * IMG_N + px) * 4;
+  };
+  function colorAt(x, z, out) {
+    if (!imgData) { out[0] = out[1] = out[2] = 0.3; return out; }
+    const i = pixel(x, z);
     out[0] = imgData[i] / 255; out[1] = imgData[i + 1] / 255; out[2] = imgData[i + 2] / 255;
     return out;
+  }
+  // how much a point looks like a roof: a grey, silver or rusty speck brighter than the ground round it
+  const lum = (i) => (imgData[i] * 0.3 + imgData[i + 1] * 0.55 + imgData[i + 2] * 0.15) / 255;
+  function roofAt(x, z) {
+    if (!imgData) return 0;
+    const i = pixel(x, z), l0 = lum(i);
+    let ring = 0;
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) ring += lum(pixel(x + dx * 0.045, z + dz * 0.045));
+    const green = (imgData[i + 1] - (imgData[i] + imgData[i + 2]) / 2) / 255;
+    return smoothstep(0.02, 0.09, l0 - ring / 8) * smoothstep(0.05, 0, green);
+  }
+  // woodland mapped in OpenStreetMap (map/woods.png), 0..1
+  function woodsAt(x, z) {
+    const W = MAP.woods;
+    if (!W) return 0;
+    const h = MAP.inner.half_km;
+    const px = Math.min(Math.max(Math.floor(((x + h) / (2 * h)) * W.w), 0), W.w - 1);
+    const py = Math.min(Math.max(Math.floor(((z + h) / (2 * h)) * W.h), 0), W.h - 1);
+    return W.data[(py * W.w + px) * 4] / 255;
   }
   // the hub's launch and approach side faces the most open, lowest ground around it
   function openHeading(x, z, y) {
@@ -790,8 +947,15 @@ export function createWorld(container) {
       s.place.drop.y = groundAt(s.place.drop.x, s.place.drop.z);
       scene.add(s.place.group);
     }
+    // circle each centre high enough to clear every hill round it
+    for (const s of SITES) {
+      if (s.hub) continue;
+      let top = -Infinity;
+      for (let r = 0.1; r <= 0.75; r += 0.05) for (let k = 0; k < 48; k++) top = Math.max(top, groundAt(s.wx + Math.cos(k / 7.64) * r, s.wz + Math.sin(k / 7.64) * r));
+      s.loiterY = Math.max(s.h + AGL.loiter, top + 0.05);
+    }
     readImagery();
-    scatter = createScatter({ scene, groundAt, colorAt, half: MAP.inner.half_km,
+    scatter = createScatter({ scene, groundAt, colorAt, roofAt, woodsAt, half: MAP.inner.half_km, buildings: MAP.buildings,
       keepOut: pads.map((p) => ({ x: p.x, z: p.z, r: p.r0 })), town: { x: h0.wx, z: h0.wz, r: 2.6 }, models });
   }
 
@@ -841,15 +1005,35 @@ export function createWorld(container) {
     else o.start = { pos: drone.position.clone(), heading: headingOf() };
     if (from === to) o.crashAt = 0;
     else if (dest.hub) Object.assign(o, { kind: "land", target: hub.wire, axis: hub.axis, finalY: hub.wire.y });
-    else if (drop) Object.assign(o, { kind: "drop", target: dest.place.drop, finalY: dest.place.drop.y + AGL.drop, exitY: dest.h + AGL.loiter });
-    else Object.assign(o, { kind: "visit", target: { x: dest.wx, z: dest.wz }, finalY: dest.h + AGL.loiter });
+    else if (drop) Object.assign(o, { kind: "drop", target: dest.place.drop, finalY: dest.place.drop.y + AGL.drop, exitY: dest.loiterY });
+    else Object.assign(o, { kind: "visit", target: { x: dest.wx, z: dest.wz }, finalY: dest.loiterY });
     const f = planFlight(o, groundAt);
     f.from = from; f.to = to;
     if (fromHub) { f.pre = handlingPath(drone.position, hub.cradle); f.dur += f.pre.dur; }
     return f;
   }
   let following = null, idle = { site: 0 }, handling = null, frameDt = 1 / 60;
-  let carriage = null, swing = null, wreck = null;
+  let carriage = null, swing = null, wreck = null, hooked = false;
+  // when the hook takes the wire, the wire is drawn as a V from the two masts to the hook
+  const wireMat = new THREE.MeshStandardMaterial({ color: "#1b1c1d", roughness: 0.9 });
+  const rodGeo = new THREE.CylinderGeometry(1, 1, 1, 6).translate(0, 0.5, 0).rotateX(Math.PI / 2);
+  const wireV = [new THREE.Mesh(rodGeo, wireMat), new THREE.Mesh(rodGeo, wireMat)];
+  wireV.forEach((m) => { m.visible = false; m.castShadow = true; scene.add(m); });
+  const HOOK = new THREE.Vector3(0, 0.6, 0), _hook = new THREE.Vector3();
+  function setHooked(on) {
+    hooked = on;
+    if (hub?.wireObj) hub.wireObj.visible = !on;
+    wireV.forEach((m) => (m.visible = on));
+  }
+  function updateWire() {
+    if (!hooked) return;
+    drone.userData.parts.localToWorld(_hook.copy(HOOK));
+    [hub.mastA, hub.mastB].forEach((a, i) => {
+      const m = wireV[i];
+      m.position.copy(a); m.lookAt(_hook);
+      m.scale.set(0.000035, 0.000035, a.distanceTo(_hook));
+    });
+  }
   // physics that runs in real seconds whatever the drone is doing
   function physics(dtr) {
     if (carriage) { // the carriage hits the end stop, rebounds, then the winch pulls it back down the rail
@@ -873,11 +1057,12 @@ export function createWorld(container) {
   function followFlight(f, tMs) {
     if (following !== f) {
       following = f; idle = null; handling = null; f.lastT = -1;
+      if (hooked) setHooked(false); // a new leg always starts off the wire
       f.preQ = drone.quaternion.clone();
     }
     let t = tMs;
     if (f.pre && f.pre.dur > 0) {
-      if (t < f.pre.dur) { carry(f.pre, t / f.pre.dur, f.preQ, cradleQuat); return { frac: 0, events: [] }; }
+      if (t < f.pre.dur) { carry(f.pre, t / f.pre.dur, f.preQ, cradleQuat); return { frac: 0, events: [], warp: SLOW }; }
       t -= f.pre.dur;
     }
     const st = sampleFlight(f, t, _fp, _fa);
@@ -886,7 +1071,7 @@ export function createWorld(container) {
       if (st.onRail) { hub.carriage.position.lerpVectors(hub.rail0L, hub.rail1L, st.railK); carriage = null; }
       else if (!carriage) carriage = { t: 0 };
     }
-    if (f.tCapture != null && t >= f.tCapture && !swing) swing = { th: 0, w: 2.4 }; // the hook takes the wire: the drone pitches forward
+    if (f.tCapture != null && t >= f.tCapture && !swing) { swing = { th: 0, w: 2.4 }; setHooked(!!hub.mastA); } // the hook takes the wire: the drone pitches forward
     if (swing) drone.rotateX(swing.th);
     for (const e of st.events) onFlightEvent(e, f);
     return st;
@@ -921,6 +1106,7 @@ export function createWorld(container) {
   }
   function placeDrone() {
     following = null; handling = null; idle = { site: 0 }; swing = null; wreck = null;
+    setHooked(false);
     drone.position.copy(hub.dock);
     drone.quaternion.copy(dockQuat);
     bank = 0;
@@ -934,6 +1120,7 @@ export function createWorld(container) {
       handling.t += dt * 1000 * rate;
       if (handling.t < 0) { if (swing) { drone.quaternion.copy(handling.q0); drone.rotateX(swing.th); } return; } // swinging on the wire until the crew reaches it
       swing = null;
+      if (hooked) setHooked(false);
       const k = handling.path.dur ? handling.t / handling.path.dur : 1;
       carry(handling.path, k, handling.q0, dockQuat);
       if (k >= 1) handling = null;
@@ -947,9 +1134,12 @@ export function createWorld(container) {
     const turn = THREE.MathUtils.clamp(wrapAngle(want - cur), -maxRate * dt, maxRate * dt);
     apHead.set(Math.sin(cur + turn), 0, Math.cos(cur + turn));
     _lp.copy(p).addScaledVector(apHead, v * dt);
-    _lp.y += (s.h + AGL.loiter - p.y) * Math.min(dt * 0.5 * rate, 1);
+    _lp.y += (s.loiterY - p.y) * Math.min(dt * 0.5 * rate, 1);
+    const floor = Math.max(groundAt(_lp.x, _lp.z), groundAt(_lp.x + apHead.x * 0.15, _lp.z + apHead.z * 0.15)) + 0.035;
+    if (_lp.y < floor) _lp.y = floor;
     const omegaReal = turn / Math.max(dt, 1e-3) / (SLOW * rate);
-    flyDrone(_lp, _la.copy(_lp).addScaledVector(apHead, 0.02), dt, THREE.MathUtils.clamp(Math.atan((AIRSPEED * omegaReal) / 9.81), -0.6, 0.6));
+    // the heading angle grows turning left, so a left turn banks left (negative roll)
+    flyDrone(_lp, _la.copy(_lp).addScaledVector(apHead, 0.02), dt, THREE.MathUtils.clamp(-Math.atan((AIRSPEED * omegaReal) / 9.81), -0.6, 0.6));
   }
 
   // ---------------------------------------------------------- effects (built in metres, simulated in real seconds)
@@ -962,6 +1152,7 @@ export function createWorld(container) {
   }
   // the package leaves the belly, falls free for a moment, the paper parachute
   // opens, and it drifts down with the wind at about 5 m/s onto the drop zone
+  const _dragAxis = new THREE.Vector3();
   function dropParcel(at, dir, emergency) {
     const g = new THREE.Group();
     const box = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.3, 0.3), new THREE.MeshStandardMaterial({ color: "#c7ae84", roughness: 0.9 }));
@@ -1021,9 +1212,11 @@ export function createWorld(container) {
         const tip = landed.drift > 1.2 ? Math.PI / 2 : 0.12;
         body.rotation.set(0, 0, 0);
         body.rotateOnWorldAxis(new THREE.Vector3(landed.dirZ, 0, -landed.dirX), tip * smoothstep(0, 0.5, t - landed.t));
-        chute.position.set(Math.sin(-g.rotation.y) * 0, 2 - 1.95 * k, 0);
-        chute.position.x = 1.6 * k;
-        chute.rotation.z = -1.45 * k;
+        const windy = wind.speed > 4, wx = windy ? U.uWind.value.x : landed.dirX, wz = windy ? U.uWind.value.y : landed.dirZ;
+        const cy = Math.cos(g.rotation.y), sy = Math.sin(g.rotation.y);
+        const lx = wx * cy - wz * sy, lz = wx * sy + wz * cy, ll = Math.hypot(lx, lz) || 1; // into the parcel's own turned frame
+        chute.position.set((lx / ll) * 1.6 * k, 2 - 1.95 * k, (lz / ll) * 1.6 * k);
+        chute.quaternion.setFromAxisAngle(_dragAxis.set(lz / ll, 0, -lx / ll), 1.45 * k);
         if (t - landed.t > 240) return false;
       }
       return true;
@@ -1094,9 +1287,9 @@ export function createWorld(container) {
     drone.lookAt(p.x + _fwd.x, p.y + _fwd.y, p.z + _fwd.z);
     const flat = new THREE.Vector2(_fwd.x, _fwd.z).normalize();
     const cross = flat.x * U.uWind.value.y - flat.y * U.uWind.value.x; // crosswind component
-    drone.rotateY(-cross * U.uWindStrength.value * 0.35);
+    drone.rotateY(cross * U.uWindStrength.value * 0.35); // crab: the nose turns into the wind
     const turn = Math.atan2(_prevFwd.x * _fwd.z - _prevFwd.z * _fwd.x, _prevFwd.x * _fwd.x + _prevFwd.z * _fwd.z);
-    const want = bankTarget ?? THREE.MathUtils.clamp(-turn / Math.max(dt, 1e-3) * 0.9, -0.55, 0.55);
+    const want = bankTarget ?? THREE.MathUtils.clamp(turn / Math.max(dt, 1e-3) * 0.9, -0.55, 0.55); // right turn, right wing down
     bank += (want - bank) * Math.min(dt * 5, 1); // roll in and out over a fraction of a second
     drone.rotateZ(bank + Math.sin(performance.now() / 260) * 0.03 * U.uWindStrength.value); // and bumps in gusty air
     drone.rotateX(-0.05); // flies a few degrees nose-up: the wing's angle of attack
@@ -1104,8 +1297,28 @@ export function createWorld(container) {
   }
 
   // ---------------------------------------------------------- camera moves and the destination card
-  // framed so every site sits between the left tools and the dock on a 16:10 screen
+  // The overview looks at the map from the south; its distance is fitted so every
+  // site sits between the left tools and the bottom panel on any screen shape.
   const HOME = { target: new THREE.Vector3(-2, 0.4, 16), position: new THREE.Vector3(7.3, 26.5, 62.4) };
+  const HOME_DIR = HOME.position.clone().sub(HOME.target).normalize();
+  let atHome = true;
+  function fitHome() {
+    if (!SITES.length) return;
+    const cam = camera.clone();
+    cam.fov = MAP_FOV; cam.aspect = window.innerWidth / window.innerHeight;
+    const pts = SITES.map((s) => new THREE.Vector3(s.wx, s.h, s.wz));
+    const target = pts.reduce((a, p) => a.add(p), new THREE.Vector3()).divideScalar(pts.length);
+    const fits = (dist) => {
+      cam.position.copy(target).addScaledVector(HOME_DIR, dist);
+      cam.lookAt(target); cam.updateProjectionMatrix(); cam.updateMatrixWorld();
+      return pts.every((p) => { const q = p.clone().project(cam); return q.x > -0.6 && q.x < 0.88 && q.y > -0.5 && q.y < 0.78; });
+    };
+    let lo = 15, hi = 95;
+    for (let i = 0; i < 24; i++) { const mid = (lo + hi) / 2; if (fits(mid)) hi = mid; else lo = mid; }
+    // nudge the view so the sites sit in the middle of the free area, not of the whole screen
+    HOME.target.copy(target).add(new THREE.Vector3(1.5, 0, 1.5));
+    HOME.position.copy(HOME.target).addScaledVector(HOME_DIR, hi);
+  }
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
   let camMove = null;
   function moveCamera(toTarget, toPosition) {
@@ -1116,11 +1329,13 @@ export function createWorld(container) {
     return target.clone().addScaledVector(dir, THREE.MathUtils.clamp(distance, controls.minDistance, controls.maxDistance));
   }
   function focusSite(i) {
+    atHome = false;
     const p = new THREE.Vector3(SITES[i].wx, SITES[i].h, SITES[i].wz);
     if (mode !== "map") { const yaw = chase.head + chase.orbit; return startOut(p, p.clone().add(new THREE.Vector3(-Math.sin(yaw) * 10, 12, -Math.cos(yaw) * 10))); }
     moveCamera(p, viewFrom(p, 16));
   }
-  function resetView() { if (mode !== "map") return startOut(HOME.target.clone(), HOME.position.clone()); moveCamera(HOME.target.clone(), HOME.position.clone()); }
+  function resetView() { atHome = true; if (mode !== "map") return startOut(HOME.target.clone(), HOME.position.clone()); moveCamera(HOME.target.clone(), HOME.position.clone()); }
+  controls.addEventListener("start", () => { atHome = false; });
   function zoomBy(f) {
     if (mode !== "map") { chase.dist = THREE.MathUtils.clamp(chase.dist * f, 0.006, 0.25); return; }
     moveCamera(controls.target.clone(), viewFrom(controls.target, camera.position.distanceTo(controls.target) * f));
@@ -1136,8 +1351,8 @@ export function createWorld(container) {
   let mode = "map";   // map | in | chase | out
   let cine = 0;       // 0 the map look .. 1 the chase look
   let trans = null;
-  // distances in km: the camera rides about 16 m behind the drone
-  const chase = { head: 0, orbit: 0, lookYaw: 0, lookPitch: 0, dist: 0.016, speed: 0, last: new THREE.Vector3(),
+  // distances in km: the camera rides about 12 m behind the drone and a little above it
+  const chase = { head: 0, orbit: 0, lookYaw: 0, lookPitch: 0, dist: 0.012, speed: 0, last: new THREE.Vector3(),
     pos: new THREE.Vector3(), off: new THREE.Vector3(), lastInput: 0, dragging: false, primed: false };
   const _cPos = new THREE.Vector3(), _cTgt = new THREE.Vector3(), _cQuat = new THREE.Quaternion(), _cMat = new THREE.Matrix4();
   const _cDir = new THREE.Vector3(), _roll = new THREE.Quaternion(), _ctrl = new THREE.Vector3(), _q2 = new THREE.Quaternion(), _Z = new THREE.Vector3(0, 0, 1);
@@ -1167,8 +1382,8 @@ export function createWorld(container) {
     }
     const fast = Math.min(chase.speed / 600, 1);
     const yaw = chase.head + chase.orbit + chase.lookYaw;
-    const pitch = THREE.MathUtils.clamp(0.2 + chase.lookPitch, -0.05, 1.2);
-    const dist = chase.dist * (1 + fast * 0.5);
+    const pitch = THREE.MathUtils.clamp(0.3 + chase.lookPitch, -0.05, 1.2);
+    const dist = chase.dist * (1 + fast * 0.35);
     const fx = Math.sin(yaw), fz = Math.cos(yaw), d = drone.position;
     _cPos.set(d.x - fx * Math.cos(pitch) * dist, d.y + Math.sin(pitch) * dist, d.z - fz * Math.cos(pitch) * dist);
     const ws = U.uWindStrength.value, s = now / 1000; // a little buffeting in the wind
@@ -1201,20 +1416,25 @@ export function createWorld(container) {
     shot = { kind, pos: pos.clone(), zone, look: drone.position.clone(), subject: drone, size: 0.0033, until: Infinity, t0: performance.now(), fov: camera.fov };
     shot.pos.y = Math.max(shot.pos.y, groundAt(shot.pos.x, shot.pos.z) + 0.0015);
   }
+  // Like a camera operator with a long lens: far from the ground it is heading for,
+  // the subject fills about a fifth of the frame; as it nears that ground the lens
+  // widens until both fit. The shot ends when the subject flies out of reach.
   const _sv1 = new THREE.Vector3(), _sv2 = new THREE.Vector3(), _sAim = new THREE.Vector3();
   function runShot(now, dt) {
     const p = shot.subject.position;
-    _sAim.copy(p).lerp(shot.zone, 0.35); // aim between the subject and the ground it is heading for
-    shot.look.lerp(_sAim, 1 - Math.exp(-dt * 7));
+    // 1 while the ground is part of the action: the launcher only until the drone leaves the rail
+    const w = shot.kind === "launch" ? smoothstep(0.035, 0.012, p.distanceTo(shot.zone)) : smoothstep(0.13, 0.05, p.distanceTo(shot.zone));
+    _sAim.copy(p).lerp(shot.zone, 0.35 * w);
+    shot.look.lerp(_sAim, 1 - Math.exp(-dt * (8 + 30 * (1 - w))));
     camera.position.copy(shot.pos);
     camera.up.set(0, 1, 0);
     camera.lookAt(shot.look);
     const d = Math.max(shot.pos.distanceTo(p), 0.001);
-    const span = _sv1.copy(p).sub(shot.pos).angleTo(_sv2.copy(shot.zone).sub(shot.pos)) / DEG; // both must fit
-    const want = THREE.MathUtils.clamp(Math.max(((2 * Math.atan(shot.size / 2 / d)) / DEG) * 6, span * 1.5), 6, 58);
-    shot.fov += (want - shot.fov) * Math.min(dt * 3, 1);
+    const span = _sv1.copy(p).sub(shot.pos).angleTo(_sv2.copy(shot.zone).sub(shot.pos)) / DEG;
+    const want = THREE.MathUtils.clamp(Math.max(((2 * Math.atan(shot.size / 2 / d)) / DEG) * 5, span * 1.6 * w), 5, 55);
+    shot.fov += (want - shot.fov) * Math.min(dt * 4, 1);
     setFov(shot.fov);
-    if (now > shot.until || now - shot.t0 > 25000 || d > 2) shot = null;
+    if (now > shot.until || now - shot.t0 > 25000 || d > (shot.kind === "launch" ? 0.5 : 1.6)) shot = null;
   }
   function startIn() {
     mode = "in";
@@ -1264,6 +1484,44 @@ export function createWorld(container) {
       chase.dist = THREE.MathUtils.clamp(chase.dist * Math.exp(e.deltaY * 0.0012), 0.006, 0.25);
     }, { passive: true });
   }
+  // From the map the drone is a few pixels, and parked at the hub it sits under the
+  // hub's pin; a marker drawn over the labels shows where it is and where it heads.
+  const markerEl = document.createElement("div");
+  markerEl.className = "drone-marker";
+  markerEl.innerHTML = '<span class="arrow"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 2.5c.6 0 1 .5 1 1.2v5.6l7.6 3.4c.3.2.5.5.5.9v1.2l-8.1-1.9v4.6l2.3 1.7v1.3L12 19.6l-3.3.9v-1.3L11 17.5v-4.6l-8.1 1.9v-1.2c0-.4.2-.7.5-.9L11 9.3V3.7c0-.7.4-1.2 1-1.2Z"/></svg></span>';
+  const marker = new CSS2DObject(markerEl);
+  scene.add(marker);
+  const _mk1 = new THREE.Vector3(), _mk2 = new THREE.Vector3();
+  function updateMarker() {
+    const show = mode === "map" && camera.position.distanceTo(drone.position) > 5;
+    marker.visible = show;
+    if (!show) return;
+    marker.position.copy(drone.position);
+    drone.getWorldDirection(_mk2).setY(0);
+    _mk1.copy(drone.position).project(camera);
+    _mk2.multiplyScalar(0.5).add(drone.position).project(camera);
+    const ang = Math.atan2(-(_mk2.y - _mk1.y) * window.innerHeight, (_mk2.x - _mk1.x) * window.innerWidth);
+    markerEl.firstChild.style.transform = `rotate(${(ang + Math.PI / 2).toFixed(3)}rad)`;
+  }
+  // a label shows only when the camera can see the ground it stands on
+  const _ls = new THREE.Vector3();
+  function seen(x, y, z) {
+    const c = camera.position, n = 40;
+    for (let i = 1; i < n; i++) {
+      const t = i / n;
+      _ls.set(c.x + (x - c.x) * t, c.y + (y - c.y) * t, c.z + (z - c.z) * t);
+      if (heightAt(_ls.x, _ls.z) > _ls.y + 0.004) return false;
+    }
+    return true;
+  }
+  function updateLabels() {
+    for (const o of siteObjs) {
+      const show = !shot && mode !== "in" && mode !== "out" && seen(o.wx, o.h + 0.06, o.wz);
+      o.label.element.classList.toggle("hidden", !show);
+    }
+    if (popup?.visible) popup.element.classList.toggle("hidden", !seen(popup.position.x, popup.position.y + 0.06, popup.position.z));
+  }
+
   let popup = null;
   function attachPopup(el) {
     popup = new CSS2DObject(el);
@@ -1282,8 +1540,14 @@ export function createWorld(container) {
   async function build(sites) {
     await mapReady;
     SITES = sites.map((s) => ({ ...s, wx: s.x, wz: -s.y }));
-    // grade the ground flat under the hub (and its approach) and under each compound and drop zone
-    for (const s of SITES) pads.push({ x: s.wx, z: s.wz, r0: s.hub ? 0.2 : 0.16, r1: s.hub ? 0.45 : 0.38, m: elevation(s.wx, s.wz) });
+    // the ground graded flat only under the hub's yard and each compound with its drop
+    // zone, at their mean height, so the cut and fill stay small
+    for (const s of SITES) {
+      const r0 = s.hub ? 0.095 : 0.065, r1 = s.hub ? 0.24 : 0.17;
+      let m = 0, n = 0;
+      for (const r of [0, r0 * 0.5, r0]) for (let k = 0; k < 16; k++) { m += rawElevation(s.wx + Math.cos(k / 2.55) * r, s.wz + Math.sin(k / 2.55) * r); n++; }
+      pads.push({ x: s.wx, z: s.wz, r0, r1, m: m / n });
+    }
     for (const s of SITES) s.h = heightAt(s.wx, s.wz);
     buildTerrain();
     buildWater();
@@ -1295,11 +1559,35 @@ export function createWorld(container) {
     placeDrone();
     drone.visible = true;
     setTime(0);
+    fitHome();
+    controls.target.copy(HOME.target); camera.position.copy(HOME.position);
     ready = true;
   }
 
-  let slowSince = 0, aoOn = true, startedAt = 0, shadowNear = null;
-  if (new URLSearchParams(location.search).get("quality") === "low") { ao.enabled = false; aoOn = false; composer.setPixelRatio(1); resize(); }
+  let slowSince = 0, fastSince = 0, aoOn = true, aoTries = 0, startedAt = 0, shadowNear = null, aoNear = null, shadowDrawn = 0;
+  const _look = new THREE.Vector3();
+  // the cumulus' shadows, drawn where the sun casts them, about once a second
+  function drawCloudShadows() {
+    const g = shadowCanvas.getContext("2d"), n = shadowCanvas.width, k = n / CLOUD_SPAN;
+    g.globalCompositeOperation = "source-over";
+    g.fillStyle = "#000";
+    g.fillRect(0, 0, n, n);
+    cloudShadowTex.needsUpdate = true;
+    if (sunDir.y < 0.05) return;
+    g.globalCompositeOperation = "lighter"; // overlapping clouds shade deeper
+    for (const cl of clouds.children) {
+      const lift = cl.position.y - 0.4;
+      const x = cl.position.x - (sunDir.x / sunDir.y) * lift, z = cl.position.z - (sunDir.z / sunDir.y) * lift;
+      const r = (cl.userData.size || 1.5) * 0.62 * k, cx = (x + CLOUD_SPAN / 2) * k, cz = (z + CLOUD_SPAN / 2) * k;
+      const gr = g.createRadialGradient(cx, cz, 0, cx, cz, r);
+      gr.addColorStop(0, "rgba(255,0,0,0.85)"); gr.addColorStop(0.55, "rgba(255,0,0,0.55)"); gr.addColorStop(1, "rgba(255,0,0,0)");
+      g.fillStyle = gr;
+      g.fillRect(cx - r, cz - r, 2 * r, 2 * r);
+    }
+    cloudShadowTex.needsUpdate = true;
+  }
+  const lowQuality = new URLSearchParams(location.search).get("quality") === "low";
+  if (lowQuality) { ao.enabled = false; aoOn = false; composer.setPixelRatio(1); resize(); }
   const LIMIT = 40;
   const GREEN = new THREE.Color("#46ff8a"), DIM = new THREE.Color("#1d3326"), WHITE = new THREE.Color(1, 1, 1);
   function aimSock(sock, parentYaw, ws) {
@@ -1339,7 +1627,7 @@ export function createWorld(container) {
     if (waterNormal) waterNormal.offset.set(now * 0.000012 * (1 + wind.speed / 20), now * 0.000008);
     if (mode === "map") {
       if (camMove) {
-        const k = camMove.dur ? Math.min((now - camMove.t0) / camMove.dur, 1) : 1;
+        const k = camMove.dur ? THREE.MathUtils.clamp((now - camMove.t0) / camMove.dur, 0, 1) : 1;
         const e = ease(k);
         controls.target.lerpVectors(camMove.fromT, camMove.toT, e);
         camera.position.lerpVectors(camMove.fromP, camMove.toP, e);
@@ -1347,10 +1635,13 @@ export function createWorld(container) {
       }
       controls.target.x = THREE.MathUtils.clamp(controls.target.x, -LIMIT, LIMIT);
       controls.target.z = THREE.MathUtils.clamp(controls.target.z, -LIMIT, LIMIT);
+      if (!camMove) controls.target.y += (heightAt(controls.target.x, controls.target.z) - controls.target.y) * Math.min(dt * 3, 1);
       controls.update();
+      const floor = Math.max(groundAt(camera.position.x, camera.position.z), heightAt(camera.position.x, camera.position.z)) + 0.06;
+      if (camera.position.y < floor) camera.position.y = floor;
       cine = 0;
     } else if (mode === "out") {
-      const k = trans.dur ? Math.min((now - trans.t0) / trans.dur, 1) : 1, e = ease(k);
+      const k = trans.dur ? THREE.MathUtils.clamp((now - trans.t0) / trans.dur, 0, 1) : 1, e = ease(k);
       _ctrl.set(trans.fromP.x, trans.toP.y * 0.8 + trans.fromP.y * 0.2, trans.fromP.z); // climb first, then glide over
       bezier(camera.position, trans.fromP, _ctrl, trans.toP, e);
       _cMat.lookAt(trans.toP, trans.toT, UP);
@@ -1368,7 +1659,7 @@ export function createWorld(container) {
     } else {
       const fov = chasePose(dt, now);
       if (mode === "in") {
-        const k = trans.dur ? Math.min((now - trans.t0) / trans.dur, 1) : 1, e = ease(k);
+        const k = trans.dur ? THREE.MathUtils.clamp((now - trans.t0) / trans.dur, 0, 1) : 1, e = ease(k);
         _ctrl.set(chase.pos.x, trans.fromP.y * 0.75 + chase.pos.y * 0.25, chase.pos.z); // cross over high, then dive in behind
         bezier(camera.position, trans.fromP, _ctrl, chase.pos, e);
         camera.quaternion.slerpQuaternions(trans.fromQ, _cQuat, ease(Math.min(k * 1.15, 1)));
@@ -1396,7 +1687,11 @@ export function createWorld(container) {
       const s = Math.max(DRONE_M, camera.position.distanceTo(fx.obj.position) * fx.obj.userData.minScale);
       fx.obj.userData.s = s;
       fx.obj.scale.setScalar(s);
-      if (!fx.step(dt * SLOW * rate)) { scene.remove(fx.obj); effects.splice(i, 1); }
+      if (!fx.step(dt * SLOW * rate)) {
+        scene.remove(fx.obj);
+        fx.obj.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
+        effects.splice(i, 1);
+      }
     }
     // near plane and shadows follow the scale of what the camera is looking at
     const camGround = groundAt(camera.position.x, camera.position.z);
@@ -1416,7 +1711,16 @@ export function createWorld(container) {
     const focus = local ? (mode === "map" ? controls.target : shot ? shot.look : drone.position) : null;
     if (focus) { sun.target.position.copy(focus); sun.position.copy(focus).addScaledVector(sunDir, 12); }
     else { sun.target.position.set(0, 0, 0); sun.position.copy(sunDir).multiplyScalar(120); }
-    scatter.update(camera.position, cine > 0.05 || camera.position.y - camGround < 4);
+    const camAGL = camera.position.y - camGround;
+    let look = null;
+    if (mode === "map") { if (camAGL < 7) look = controls.target; }
+    else {
+      camera.getWorldDirection(_look).setY(0).normalize();
+      look = _look.multiplyScalar(1.6).add(camera.position);
+      look.x = THREE.MathUtils.clamp(look.x, -GHALF, GHALF); look.z = THREE.MathUtils.clamp(look.z, -GHALF, GHALF);
+    }
+    updateTerrainLOD(camera.position, look, cine > 0.05 || camAGL < 9, now);
+    scatter.update(camera.position, look || camera.position, cine > 0.05 || camAGL < 6);
     // the look: dark aerial map at 0, sky, clouds and blue haze at 1
     skyU.uCine.value = cine;
     skyU.uDark.value.copy(hazeNow);
@@ -1433,13 +1737,31 @@ export function createWorld(container) {
     }
     renderer.toneMappingExposure = 0.9 + 0.05 * cine;
     grade.uniforms.uCine.value = cine;
+    overlay.uOverlay.value = 1 - cine;
+    routeMat.opacity = 0.85 * (1 - cine);
+    if (route) route.visible = cine < 0.98;
+    shade.uShadowAmt.value = cine;
+    if (cine > 0.01 && now - shadowDrawn > 1000) { shadowDrawn = now; drawCloudShadows(); }
+    // ambient occlusion at the scale of what is in view: hills from the map, roofs and the drone up close
+    const nearAO = cine > 0.5;
+    if (nearAO !== aoNear) {
+      aoNear = nearAO;
+      ao.updateGtaoMaterial(nearAO ? { radius: 0.006, distanceExponent: 1.2, thickness: 0.004, scale: 1.0 } : { radius: 0.6, distanceExponent: 1.5, thickness: 1.2, scale: 1.0 });
+    }
     skyDome.position.copy(camera.position);
+    updateWire();
+    updateMarker();
+    updateLabels();
     composer.render();
     labels.render(scene, camera);
-    // drop ambient occlusion if the machine cannot hold ~35 fps
+    if (marker.visible) markerEl.style.zIndex = "100000";
+    // drop ambient occlusion if the machine cannot hold ~35 fps, and try it again
+    // (at most twice) once frames come fast; a hidden tab counts for nothing
     if (!startedAt) startedAt = now;
-    if (dt > 0.029) { if (!slowSince) slowSince = now; } else slowSince = 0;
+    if (document.hidden) { slowSince = fastSince = 0; return; }
+    if (dt > 0.029) { if (!slowSince) slowSince = now; fastSince = 0; } else { slowSince = 0; if (!fastSince) fastSince = now; }
     if (aoOn && slowSince && now - slowSince > 3000 && now - startedAt > 5000) { ao.enabled = false; aoOn = false; }
+    if (!aoOn && !lowQuality && aoTries < 2 && fastSince && now - fastSince > 10000) { ao.enabled = true; aoOn = true; aoTries++; fastSince = 0; }
   }
 
   return {

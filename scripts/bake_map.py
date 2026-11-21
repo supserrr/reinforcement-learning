@@ -38,7 +38,7 @@ TERRAIN = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.p
 
 # name: (half width in km, imagery zoom, imagery px, terrain zoom, heightmap px)
 LAYERS = {
-    "inner": (32.0, 14, 6144, 12, 1024),
+    "inner": (32.0, 14, 6144, 13, 2048),   # 31 m a height sample: SRTM's own resolution
     "outer": (100.0, 11, 2048, 10, 1024),
 }
 
@@ -123,9 +123,39 @@ def bake(name: str, half_km: float, img_z: int, img_px: int, dem_z: int, dem_px:
             "min_m": int(h.min()), "max_m": int(h.max())}
 
 
+# Lake Kivu's surface and a point well inside it (km east, km north of the hub)
+KIVU_M, KIVU_SEED = 1462, (-67.0, 9.0)
+
+
+def bake_lake(outer: dict) -> dict:
+    """Mark the ground that is Lake Kivu's surface: the connected patch of near-lake-level
+    ground around a point in the lake. Low valleys elsewhere stay dry, and the river
+    gorge out of its south end stops the fill where it drops below the lake."""
+    n, half = outer["height_px"], outer["half_km"]
+    h = np.frombuffer((OUT / outer["height"]).read_bytes(), dtype="<u2").reshape(n, n).astype(np.int32)
+    ok = (h >= KIVU_M - 12) & (h <= KIVU_M + 6)
+    px = lambda km: int(round((km + half) / (2 * half) * (n - 1)))
+    seed = (px(-KIVU_SEED[1]), px(KIVU_SEED[0]))  # row from the north edge, column from the west
+    if not ok[seed]:
+        raise SystemExit(f"lake seed {KIVU_SEED} is not at lake level ({h[seed]} m)")
+    lake = np.zeros_like(ok)
+    lake[seed] = True
+    while True:  # grow the seed through level ground
+        grown = lake.copy()
+        grown[1:] |= lake[:-1]; grown[:-1] |= lake[1:]; grown[:, 1:] |= lake[:, :-1]; grown[:, :-1] |= lake[:, 1:]
+        grown &= ok
+        if (grown == lake).all():
+            break
+        lake = grown
+    Image.fromarray((lake * 255).astype(np.uint8), mode="L").save(OUT / "outer-lake.png", optimize=True)
+    print(f"lake: {lake.sum() * (2 * half / n) ** 2:.0f} km² at {KIVU_M} m")
+    return {"mask": "outer-lake.png", "surface_m": KIVU_M}
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     layers = {name: bake(name, *spec) for name, spec in LAYERS.items()}
+    layers["outer"]["lake"] = bake_lake(layers["outer"])
     meta = {
         "center": {"lat": LAT0, "lon": LON0},
         "note": "x east and y north in km from the center; heightmaps are uint16 metres, row 0 at the north edge",

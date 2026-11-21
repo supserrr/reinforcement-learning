@@ -8,8 +8,9 @@
 //
 // Distances and heights are kilometres (world units); speeds are playback
 // metres per second at 1x. Take-off, the drop and the landing play at 2.5x
-// real time; the cruise between them is compressed so a long leg still takes
-// only a few seconds. app.js maps the path back onto the env's shift clock.
+// real time; the cruise between them is a time-lapse (up to about 40x), and
+// sampleFlight reports the warp so the page can say so. app.js maps the path
+// back onto the env's shift clock.
 import * as THREE from "three";
 
 export const AGL = { cruise: 0.12, drop: 0.035, loiter: 0.09, floor: 0.03 };
@@ -99,7 +100,7 @@ export function planFlight(o, ground) {
       a = s <= sT ? Math.min(a, o.finalY + Math.tan(4.5 * DEG) * (sT - s)) : o.finalY - 0.0016 * smooth(sT, L + 1e-6, s);
     }
     const onRail = o.launch && s < railLen + 0.06;
-    const onFinal = o.kind === "land" && s > sT - 0.3;
+    const onFinal = o.kind === "land" && s > sT - 0.08; // the last 80 m are over the hub's own yard
     const overZone = o.kind === "drop" && Math.abs(s - sT) < 0.25;
     if (!onRail && !onFinal) a = Math.max(a, g[i] + (overZone ? 0.025 : AGL.floor));
     alt[i] = a;
@@ -129,7 +130,7 @@ export function planFlight(o, ground) {
   let slowLen = 0;
   for (let i = 0; i < pts.length; i++) if (outside(i * ds) === 0) slowLen += ds;
   const cruiseLen = Math.max(sEnd - slowLen, 0);
-  const vCruise = Math.max(vSlow, (cruiseLen * 1000) / Math.min(Math.max(cruiseLen * 0.75, 2.5), 11));
+  const vCruise = Math.max(vSlow, (cruiseLen * 1000) / Math.min(Math.max(cruiseLen * 0.9, 4), 16));
   const v = pts.map((_, i) => {
     const s = i * ds;
     if (o.launch && s <= railLen) return 5 + 45 * (s / railLen);                       // the catapult stroke
@@ -140,13 +141,14 @@ export function planFlight(o, ground) {
   for (let i = 1; i < pts.length; i++) t[i] = t[i - 1] + (pts[i].distanceTo(pts[i - 1]) * 1000) / ((v[i] + v[i - 1]) / 2) * 1000;
   const at = (s) => { const k = Math.min(s / ds, pts.length - 1), i = Math.floor(k), f = k - i; return i >= pts.length - 1 ? t[pts.length - 1] : t[i] + (t[i + 1] - t[i]) * f; };
 
-  // bank from the path's curvature at the real airspeed: tan(bank) = v² κ / g, rolled in and out smoothly
+  // bank from the path's curvature at the real airspeed: tan(bank) = v² κ / g, rolled in and out smoothly.
+  // turn > 0 is a right turn (x east, z south); a positive bank lowers the right wing.
   const bank = new Float32Array(pts.length);
   for (let i = 1; i < pts.length - 1; i++) {
     const ax1 = pts[i].x - pts[i - 1].x, az1 = pts[i].z - pts[i - 1].z, ax2 = pts[i + 1].x - pts[i].x, az2 = pts[i + 1].z - pts[i].z;
     const turn = Math.atan2(ax1 * az2 - az1 * ax2, ax1 * ax2 + az1 * az2);
     const run = Math.hypot(ax2, az2) * 1000 || 1;
-    bank[i] = -Math.atan((AIRSPEED * AIRSPEED * (turn / run)) / 9.81);
+    bank[i] = Math.atan((AIRSPEED * AIRSPEED * (turn / run)) / 9.81);
   }
   const bankS = bank.map((_, i) => { let sum = 0, c = 0; for (let k = Math.max(0, i - 5); k <= Math.min(pts.length - 1, i + 5); k++) { sum += bank[k]; c++; } return Math.max(-0.6, Math.min(0.6, sum / c)); });
 
@@ -158,6 +160,8 @@ export function planFlight(o, ground) {
   events.sort((a, b) => a.t - b.t);
   const f = finish(pts, t, events, o.kind, crashed);
   f.bank = bankS;
+  // playback speed over real speed, at 1x: the catapult stroke and the wire's pay-out play as they happen
+  f.warp = Float32Array.from(v, (x, i) => (o.launch && i * ds <= railLen) || (!crashed && o.kind === "land" && i * ds > sT) ? 1 : x / AIRSPEED);
   f.railLen = railLen;
   f.tCapture = events.find((e) => e.type === "capture")?.t ?? null;
   return f;
@@ -232,5 +236,6 @@ export function sampleFlight(f, tMs, pos, ahead) {
   const events = f.events.filter((e) => e.t > f.lastT && e.t <= tc).map((e) => e.type);
   f.lastT = tc;
   const bank = f.bank ? f.bank[lo] + (f.bank[hi] - f.bank[lo]) * k : 0;
-  return { frac: (lo + k) / n, events, done: tc >= t[n], bank, onRail: f.railLen > 0 && lo * STEP < f.railLen, railK: f.railLen > 0 ? Math.min((lo + k) * STEP / f.railLen, 1) : 1 };
+  const warp = f.warp ? f.warp[lo] + (f.warp[hi] - f.warp[lo]) * k : SLOW;
+  return { frac: (lo + k) / n, events, done: tc >= t[n], bank, warp, onRail: f.railLen > 0 && lo * STEP < f.railLen, railK: f.railLen > 0 ? Math.min((lo + k) * STEP / f.railLen, 1) : 1 };
 }

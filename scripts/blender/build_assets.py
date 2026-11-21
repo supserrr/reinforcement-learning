@@ -412,7 +412,6 @@ def build_hub():
             if (mx < WX and gx > 0) or (mx > WX and gx < 0):
                 continue
             k.rod(dark, (mx, 12.5, WZ), (mx + gx, 0.45, WZ + gz), 0.012, 4)
-    k.rod(rubber, (WX - 12, 12, WZ), (WX + 12, 12, WZ), 0.035, 6)
     # solar array on frames
     for r in range(3):
         for c in range(4):
@@ -450,6 +449,9 @@ def build_hub():
     dk = Kit()
     dk.box(material("dock_strip", "#1d3326", 0.4, emit="#46ff8a", strength=1), 4.6, 0.08, 0.08, -30, 1.02, -14.15)
     group("dock_strip", dk.build("dock_strip"), pivot=(-30, 1.02, -14.15))
+    wk = Kit()  # the arresting wire: the viewer pulls it into a V when the hook takes it
+    wk.rod(rubber, (WX - 12, 12, WZ), (WX + 12, 12, WZ), 0.035, 6)
+    group("wire", wk.build("wire"), pivot=(WX, 12, WZ))
     export(os.path.join(OUT, "hub.glb"))
 
 

@@ -10,9 +10,18 @@
       "image": "inner.jpg",
       "image_px": 6144,
       "height": "inner-height.bin",
-      "height_px": 1024,
-      "min_m": 1201,
-      "max_m": 2824
+      "height_px": 2048,
+      "min_m": 1337,
+      "max_m": 2826,
+      "buildings": {
+        "file": "buildings.bin",
+        "count": 194120,
+        "origin_m": 32000.0
+      },
+      "woods": {
+        "mask": "woods.png",
+        "px": 1024
+      }
     },
     "outer": {
       "half_km": 100.0,
@@ -21,8 +30,12 @@
       "height": "outer-height.bin",
       "height_px": 1024,
       "min_m": 810,
-      "max_m": 4460
+      "max_m": 4460,
+      "lake": {
+        "mask": "outer-lake.png",
+        "surface_m": 1462
+      }
     }
   },
-  "attribution": "Imagery: Sentinel-2 cloudless 2025 by EOX (contains modified Copernicus Sentinel data 2025), CC BY-NC-SA 4.0. Elevation: AWS Terrain Tiles (SRTM, NASA)."
+  "attribution": "Imagery: Sentinel-2 cloudless 2025 by EOX (contains modified Copernicus Sentinel data 2025), CC BY-NC-SA 4.0. Elevation: AWS Terrain Tiles (SRTM, NASA). Buildings and woodland: (c) OpenStreetMap contributors, ODbL."
 }

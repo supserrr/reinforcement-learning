@@ -137,7 +137,7 @@ export function buildHub({ x, y, z, yaw }, model = null) {
   // recovery: two 15 m masts and the wire between them, 12 m up
   const WZ = 24, WX = -32;
   for (const mx of [WX - 12, WX + 12]) { k.cyl(steel, 0.3, 15, mx, 7.9, WZ, 12); k.box(yellow, 0.9, 0.6, 0.9, mx, 15.6, WZ); }
-  k.cyl(dark, 0.04, 24, WX, 12, WZ, 6, 0, Math.PI / 2);
+
   // solar array behind the buildings
   for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) k.box(panel, 9.6, 0.12, 3.4, -8 + c * 10.2, 1.4, -56 - r * 6, 0, -0.26);
   // perimeter fence
@@ -145,11 +145,13 @@ export function buildHub({ x, y, z, yaw }, model = null) {
   const sock = windsock(k, 52, 42);
 
   const group = k.build();
-  group.add(sock, chargeLight, dockStrip, carriage);
+  const wireObj = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 24, 6).rotateZ(Math.PI / 2), dark);
+  wireObj.position.set(WX, 12, WZ);
+  group.add(sock, chargeLight, dockStrip, carriage, wireObj);
   const W = place(group, x, y, z, yaw);
   const fwd = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
   return {
-    group, sock, chargeLight, dockStrip, carriage, rail0L, rail1L,
+    group, sock, chargeLight, dockStrip, carriage, rail0L, rail1L, wireObj,
     dock: W(-30, 1.0 + 0.22, -16),                     // the drone's belly on the dock cradle
     cradle: W(LX, rail0.y + 0.45, rail0.z),            // on the rail, ready to launch
     railEnd: W(LX, rail1.y + 0.45, rail1.z),
@@ -158,7 +160,8 @@ export function buildHub({ x, y, z, yaw }, model = null) {
     axis: fwd.clone().negate(),                        // landings fly toward -z, into the wire
     heading: fwd,
     padY: y + 0.4 * M,
-    cams: { launch: W(LX + 16, 2.6, -1), land: W(WX + 26, 3.5, WZ + 14) },
+    cams: { launch: W(LX + 16, 2.6, -1), land: W(WX + 30, 2.2, WZ - 20) }, // beside and past the wire, facing the approach
+    mastA: W(WX - 12, 12, WZ), mastB: W(WX + 12, 12, WZ),
     supply: W(32, 2, -33),
   };
 }
@@ -173,15 +176,16 @@ function hubFromModel(model, { x, y, z, yaw }) {
     return m;
   };
   const chargeLight = lamp("charge_light"), dockStrip = lamp("dock_strip");
-  const carriage = model.get("carriage"), sock = model.get("windsock");
+  const carriage = model.get("carriage"), sock = model.get("windsock"), wireObj = model.get("wire");
   for (const o of [sock]) o.rotation.set(0, 0, 0);
+  group.traverse((o) => { if (o.isMesh && /^(alpha|leaf)_/.test(o.material.name)) o.material = keepCoverage(o.material); });
   const W = place(group, x, y, z, yaw);
   const LX = 26, up12 = 12 * Math.PI / 180, RL = 15, r0 = new THREE.Vector3(LX, 1.4, -8);
   const r1 = new THREE.Vector3(LX, r0.y + Math.sin(up12) * RL, r0.z + Math.cos(up12) * RL);
   const WX = -32, WZ = 24;
   const fwd = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
   return {
-    group, sock, chargeLight, dockStrip, carriage,
+    group, sock, chargeLight, dockStrip, carriage, wireObj,
     rail0L: carriage.position.clone(), rail1L: carriage.position.clone().add(r1.clone().sub(r0)),
     dock: W(-30, 1.72, -16),                           // belly on the dock's rubber pads
     cradle: W(LX, r0.y + 0.66, r0.z),                  // on the carriage, ready to launch
@@ -191,7 +195,8 @@ function hubFromModel(model, { x, y, z, yaw }) {
     axis: fwd.clone().negate(),
     heading: fwd,
     padY: y + 0.4 * M,
-    cams: { launch: W(LX + 16, 2.6, -1), land: W(WX + 26, 3.5, WZ + 14) },
+    cams: { launch: W(LX + 16, 2.6, -1), land: W(WX + 30, 2.2, WZ - 20) }, // beside and past the wire, facing the approach
+    mastA: W(WX - 12, 12, WZ), mastB: W(WX + 12, 12, WZ),
     supply: W(32, 2, -33),
   };
 }
@@ -210,9 +215,12 @@ export function buildClinic({ x, y, z, yaw, seed }, model = null) {
       if (!done.has(o.material.name)) { const m = o.material.clone(); m.color.set(tints[o.material.name]); done.set(o.material.name, m); }
       o.material = done.get(o.material.name);
     });
+    group.traverse((o) => {
+      if (o.isMesh && /^(alpha|leaf)_/.test(o.material.name) && !o.material.userData.coverage) { o.material.userData.coverage = true; keepCoverage(o.material); }
+    });
     const sock = group.getObjectByName("windsock");
     const W = place(group, x, y, z, yaw);
-    return { group, sock, drop: W(0, 0, 46), cams: { drop: W(-42, 2, 4) } };
+    return { group, sock, drop: W(0, 0, 46), cams: { drop: W(-34, 1.8, 28) } /* outside the compound wall, beside the drop zone */ };
   }
   const k = kit();
   const r = (n) => { const v = Math.sin((seed + 1) * 12.9898 + n * 78.233) * 43758.5453; return v - Math.floor(v); };
@@ -240,7 +248,7 @@ export function buildClinic({ x, y, z, yaw, seed }, model = null) {
   group.add(sock);
   for (const m of group.children) if (m.material === white) { m.material.polygonOffset = true; m.material.polygonOffsetFactor = -2; }
   const W = place(group, x, y, z, yaw);
-  return { group, sock, drop: W(0, 0, 46), cams: { drop: W(-42, 2, 4) } };
+  return { group, sock, drop: W(0, 0, 46), cams: { drop: W(-34, 1.8, 28) } /* outside the compound wall, beside the drop zone */ };
 }
 
 // ------------------------------------------------------------------ houses and trees
@@ -259,8 +267,6 @@ const fbm = (x, z, s) => vnoise(x, z, s) * 0.55 + vnoise(x * 2.1, z * 2.1, s + 1
 function mulberry(seed) { return () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const sstep = (a, b, x) => { const t = Math.min(Math.max((x - a) / (b - a), 0), 1); return t * t * (3 - 2 * t); };
 
-const WALLS = ["#c79a6c", "#b5845b", "#d8ccb6", "#e4ddcd", "#a9734f", "#cdb999", "#bf8f64"].map((c) => new THREE.Color(c));
-const ROOFS = ["#8a8f94", "#a2a7ab", "#7c4632", "#93533a", "#6e757a", "#b0694a", "#5f6a72"].map((c) => new THREE.Color(c));
 
 // ------------------------------------------------------------------ tree models
 // A crown is a few lumpy lobes with a darker underside and core (cheap ambient
@@ -280,7 +286,7 @@ function crownGeometry(lobes, detail, seed) {
     const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
     const k = 1 + (vnoise(x * 2.6 + 7, z * 2.6 + y * 1.9, 11) - 0.5) * 0.34; // lumpy, not a ball
     pos.setXYZ(i, x * k, y * k, z * k);
-    const ao = 0.42 + 0.58 * sstep(-0.95, 0.75, y) * (0.75 + 0.25 * Math.min(Math.hypot(x, y, z), 1));
+    const ao = 0.32 + 0.68 * sstep(-0.95, 0.75, y) * (0.7 + 0.3 * Math.min(Math.hypot(x, y, z), 1));
     const clump = 0.78 + 0.4 * vnoise(x * 7.3, z * 7.3 + y * 5.1, 13);
     col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = ao * clump;
   }
@@ -354,8 +360,83 @@ function foliageNormals(geo) {
   return geo;
 }
 
-export function createScatter({ scene, groundAt, colorAt, half, keepOut, town, models = {} }) {
-  const CH = 0.5, R_HOUSE = 3.2, R_TREE = 2.1, R_NEAR = 0.7, MAXH = 7000, MAXT = 14000;
+// Chains extra shader edits onto a material, keeping any it already has.
+function patch(material, key, edit) {
+  const prev = material.onBeforeCompile, prevKey = material.customProgramCacheKey;
+  material.onBeforeCompile = (sh, r) => { prev.call(material, sh, r); edit(sh); };
+  material.customProgramCacheKey = () => `${prevKey.call(material)}|${key}`;
+  return material;
+}
+
+// Leaf cards and chain-link are cut out of their texture by its alpha. Far away
+// the texture's smaller mip levels average the holes in, the alpha falls under
+// the cut and whole crowns vanish (leaving bare trunks) or a fence turns into a
+// grey sheet. Raising the alpha with the mip level keeps the coverage, and alpha
+// to coverage on the multisampled target softens the cut edges.
+export function keepCoverage(material) {
+  material.alphaToCoverage = true;
+  return patch(material, "coverage", (sh) => {
+    sh.fragmentShader = sh.fragmentShader.replace("#include <alphatest_fragment>", `
+      #ifdef USE_MAP
+        { vec2 ts = vec2(textureSize(map, 0)) * vMapUv;
+          float mip = max(0., .5 * log2(max(dot(dFdx(ts), dFdx(ts)), dot(dFdy(ts), dFdy(ts)))));
+          diffuseColor.a *= 1. + mip * .28; }
+      #endif
+      #include <alphatest_fragment>`);
+  });
+}
+
+// Levels of detail cross-fade instead of popping: each instance's distance from
+// the camera (and from the middle of the scattered area, for its outer rim)
+// picks a share of its pixels by a fixed screen pattern, so the near and the far
+// version of a tree each draw the pixels the other leaves out.
+export const scatterU = { uFocus: { value: new THREE.Vector2() } };
+const f3 = (v) => v.toFixed(3);
+function lodFade(material, near, far, edge) {
+  return patch(material, `lod-${near}-${far}-${edge}`, (sh) => {
+    Object.assign(sh.uniforms, scatterU);
+    sh.vertexShader = sh.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec2 vLod; uniform vec2 uFocus;")
+      .replace("#include <project_vertex>", `#include <project_vertex>
+        #ifdef USE_INSTANCING
+          vec4 lodC = modelMatrix * instanceMatrix * vec4(0., 0., 0., 1.);
+          vLod = vec2(distance(lodC.xz, cameraPosition.xz), distance(lodC.xz, uFocus));
+        #else
+          vLod = vec2(0.);
+        #endif`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace("#include <common>", "#include <common>\nvarying vec2 vLod;")
+      .replace("#include <clipping_planes_fragment>", `#include <clipping_planes_fragment>
+        {
+          float keep = 1.;
+          ${near ? `keep *= 1. - smoothstep(${f3(near[0])}, ${f3(near[1])}, vLod.x);` : ""}
+          ${far ? `keep *= smoothstep(${f3(far[0])}, ${f3(far[1])}, vLod.x);` : ""}
+          ${edge ? `keep *= 1. - smoothstep(${f3(edge[0])}, ${f3(edge[1])}, vLod.y);` : ""}
+          float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(.06711056, .00583715))));
+          if (ign >= keep) discard;
+        }`);
+  });
+}
+
+const WALLS = ["#c79a6c", "#b5845b", "#d8ccb6", "#e4ddcd", "#a9734f", "#cdb999", "#bf8f64"].map((c) => new THREE.Color(c));
+const ROOFS = ["#8a8f94", "#a2a7ab", "#7c4632", "#93533a", "#6e757a", "#b0694a", "#5f6a72", "#9aa0a4"].map((c) => new THREE.Color(c));
+const PLINTH = new THREE.Color("#7b6d5e");
+
+/**
+ * Houses and trees streamed around what the camera looks at.
+ * Houses are the real footprints from OpenStreetMap (map/buildings.bin) where
+ * it maps them; elsewhere they are placed where the satellite image shows roofs.
+ * Trees grow where the image is green and dark and where OpenStreetMap maps
+ * woodland, never inside a house. Everything sits on groundAt(), the visible
+ * ground; houses on a slope stand on a plinth down to the low side.
+ */
+export function createScatter({ scene, groundAt, colorAt, roofAt, woodsAt, half, keepOut, town, models = {}, buildings = null }) {
+  const CH = 0.5, R_HOUSE = 5, R_TREE = 4, MARGIN = 0.35;
+  const HOUSE_NEAR = [0.95, 1.25], TREE_NEAR = [0.55, 0.8], TREE_MID = [1.7, 2.1];
+  const H_EDGE = [R_HOUSE - 0.8, R_HOUSE], T_EDGE = [R_TREE - 0.7, R_TREE];
+  const tNear = models.trees ? TREE_NEAR : null;
+
+  // ------------------------------------------------ meshes
   const unitBox = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
   { // walls darken toward the ground, where light is blocked and dirt splashes up
     const pos = unitBox.attributes.position, col = new Float32Array(pos.count * 3);
@@ -364,105 +445,158 @@ export function createScatter({ scene, groundAt, colorAt, half, keepOut, town, m
   }
   const unitRoof = gable(1, 1, 1);
   const trunkGeo = new THREE.CylinderGeometry(0.3, 0.5, 1, 6).translate(0, 0.5, 0);
-  const crownNear = crownGeometry(4, 1, 5), crownFar = crownGeometry(2, 1, 9), banana = bananaGeometry();
-  const inst = (geo, max, m) => {
+  const crownMid = crownGeometry(3, 1, 5), banana = bananaGeometry();
+  const crownFar = new THREE.OctahedronGeometry(1, 0).scale(1, 0.8, 1);
+  const all = [];
+  const inst = (geo, max, m, shadow = true) => {
     const im = new THREE.InstancedMesh(geo, m, max);
     im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3);
-    im.count = 0; im.frustumCulled = false; im.castShadow = true; im.receiveShadow = true;
+    im.count = 0; im.castShadow = shadow; im.receiveShadow = true;
     scene.add(im);
+    all.push(im);
     return im;
   };
-  const walls = inst(unitBox, MAXH, mat("#ffffff", 0.9, 0, { vertexColors: true }));
-  const roofs = inst(unitRoof, MAXH, mat("#ffffff", 0.5, 0.35));
-  const trunks = inst(trunkGeo, MAXT, mat("#ffffff", 0.95));
+  const far = (m) => lodFade(m, null, models.houses ? HOUSE_NEAR : null, H_EDGE);
+  const walls = inst(unitBox, 50000, far(mat("#ffffff", 0.9, 0, { vertexColors: true })));
+  const roofs = inst(unitRoof, 50000, far(mat("#ffffff", 0.5, 0.35)));
+  const plinths = inst(unitBox, 30000, lodFade(mat("#ffffff", 0.95, 0, { vertexColors: true }), null, null, H_EDGE));
   const leafy = { vertexColors: true, envMapIntensity: 0.6 };
-  const crownsN = inst(crownNear, MAXT, swaying(mat("#ffffff", 0.92, 0, leafy), 0.06));
-  const crownsF = inst(crownFar, MAXT, swaying(mat("#ffffff", 0.92, 0, leafy), 0.06));
-  const bananas = inst(banana, MAXT, swaying(mat("#ffffff", 0.75, 0, { ...leafy, side: THREE.DoubleSide }), 0.1));
-  // instanced copies of the Blender models: four house types, four tree species up close
-  const fromModel = (node, max, leaves = 0) => {
+  const trunks = inst(trunkGeo, 20000, lodFade(mat("#ffffff", 0.95), TREE_MID, tNear, T_EDGE));
+  const crownsM = inst(crownMid, 20000, lodFade(swaying(mat("#ffffff", 0.92, 0, leafy), 0.06), TREE_MID, tNear, T_EDGE));
+  const crownsF = inst(crownFar, 40000, lodFade(mat("#ffffff", 0.95), null, TREE_MID, T_EDGE), false);
+  const bananas = inst(banana, 20000, lodFade(swaying(mat("#ffffff", 0.75, 0, { ...leafy, side: THREE.DoubleSide }), 0.1), [0.9, 1.1], tNear, T_EDGE));
+  // instanced copies of the Blender models: four house types and four tree species up close
+  const fromModel = (node, max, nearBand, leaves = 0) => {
     const mesh = node.isMesh ? node : node.children[0];
     const geo = leaves ? foliageNormals(mesh.geometry.clone()) : mesh.geometry;
-    const m = leaves ? swaying(mesh.material.clone(), leaves) : mesh.material;
-    const im = inst(geo, max, m);
+    let m = mesh.material.clone();
+    if (/^leaf_/.test(m.name)) m.color.multiplyScalar(m.name === "leaf_banana" ? 0.7 : 0.55);
+    if (/bark/.test(node.name)) m.color.multiplyScalar(0.7);
+    if (/^(leaf|alpha)_/.test(m.name)) m = keepCoverage(m);
+    if (leaves) m = swaying(m, leaves);
+    const im = inst(geo, max, lodFade(m, nearBand, null, leaves || /bark/.test(node.name) ? T_EDGE : H_EDGE));
     if (leaves) im.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: m.map, alphaTest: 0.5 }); // shadows with holes, not squares
     return im;
   };
-  const HV = models.houses ? ["a", "b", "c", "d"].map((v) => ({
-    walls: fromModel(models.houses.get(`house_${v}_walls`), 3000),
-    roof: fromModel(models.houses.get(`house_${v}_roof`), 3000),
-    trim: fromModel(models.houses.get(`house_${v}_trim`), 3000),
-  })) : null;
+  const HV = models.houses ? ["a", "b", "c", "d"].map((v) => {
+    const parts = ["walls", "roof", "trim"].map((p) => fromModel(models.houses.get(`house_${v}_${p}`), 6000, HOUSE_NEAR));
+    const box = new THREE.Box3().setFromBufferAttribute(parts[0].geometry.attributes.position);
+    const sx = box.max.x - box.min.x, sz = box.max.z - box.min.z;
+    // fit footprints along the model's long side
+    return { walls: parts[0], roof: parts[1], trim: parts[2], turn: sz > sx ? Math.PI / 2 : 0, len: Math.max(sx, sz), wid: Math.min(sx, sz), h: box.max.y };
+  }) : null;
   const SP = models.trees ? Object.fromEntries(["euc", "broad", "cypress", "banana"].map((sp) => [sp, {
-    bark: fromModel(models.trees.get(`${sp}_bark`), 6000),
-    leaves: fromModel(models.trees.get(`${sp}_leaves`), 6000, sp === "banana" ? 0.03 : 0.012),
+    bark: fromModel(models.trees.get(`${sp}_bark`), 6000, TREE_NEAR),
+    leaves: fromModel(models.trees.get(`${sp}_leaves`), 6000, TREE_NEAR, sp === "banana" ? 0.03 : 0.012),
   }])) : null;
   const WHITE = new THREE.Color(1, 1, 1);
-  const allMeshes = [walls, roofs, trunks, crownsN, crownsF, bananas,
-    ...(HV ? HV.flatMap((v) => [v.walls, v.roof, v.trim]) : []), ...(SP ? Object.values(SP).flatMap((s) => [s.bark, s.leaves]) : [])];
-  const cache = new Map();
+  const BARK = new THREE.Color("#4a3a2c"), EUC_BARK = new THREE.Color("#544b40");
+  const EUC_LEAF = new THREE.Color("#2e4233"), BROAD_LEAF = new THREE.Color("#2b4521"), CYPRESS_LEAF = new THREE.Color("#22361f"), BANANA_LEAF = new THREE.Color("#4f7029");
+
+  // ------------------------------------------------ the real buildings, by chunk
+  const osm = new Map();
+  if (buildings) {
+    const dv = buildings.data, o = buildings.origin;
+    for (let i = 0; i < buildings.count; i++) {
+      const x = (dv.getUint16(i * 8, true) - o) / 1000, z = (dv.getUint16(i * 8 + 2, true) - o) / 1000;
+      const key = Math.floor(x / CH) * 100000 + Math.floor(z / CH);
+      let l = osm.get(key);
+      if (!l) osm.set(key, (l = []));
+      l.push(i);
+    }
+  }
+  // OpenStreetMap is trusted where it maps buildings around a chunk; elsewhere it is blank, not empty
+  const mapped = (ix, iz) => {
+    let n = 0;
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) n += osm.get((ix + dx) * 100000 + iz + dz)?.length || 0;
+    return n >= 12;
+  };
+
   const slope = (x, z) => Math.hypot(groundAt(x + 0.015, z) - groundAt(x - 0.015, z), groundAt(x, z + 0.015) - groundAt(x, z - 0.015)) / 0.03;
   const blocked = (x, z, pad) => keepOut.some((p) => (x - p.x) ** 2 + (z - p.z) ** 2 < (p.r + pad) ** 2);
   const rgb = [0, 0, 0];
-  const BARK = new THREE.Color("#5b4634"), EUC_BARK = new THREE.Color("#7d7465");
 
   function houseDensity(x, z) {
     colorAt(x, z, rgb);
-    const green = rgb[1] - (rgb[0] + rgb[2]) / 2, bright = (rgb[0] + rgb[1] + rgb[2]) / 3;
-    const built = sstep(0.03, -0.015, green) * sstep(0.2, 0.36, bright);  // grey, bare ground in the imagery
+    const green = rgb[1] - (rgb[0] + rgb[2]) / 2;
     const dt = Math.hypot(x - town.x, z - town.z);
-    const clinic = keepOut.reduce((m, p) => Math.max(m, 1 - sstep(0.2, 1.3, Math.hypot(x - p.x, z - p.z))), 0);
-    return Math.min(0.16 + 0.55 * sstep(0.5, 0.76, fbm(x * 0.8, z * 0.8, 3)) + 0.9 * (1 - sstep(0.3, town.r, dt)) + 0.35 * clinic + 0.35 * built, 1);
+    const near = keepOut.reduce((m, p) => Math.max(m, 1 - sstep(0.2, 1.3, Math.hypot(x - p.x, z - p.z))), 0);
+    return Math.min(0.05 + 0.85 * roofAt(x, z) + 0.25 * sstep(0.5, 0.76, fbm(x * 0.8, z * 0.8, 3)) * sstep(0.04, 0, green)
+      + 0.5 * (1 - sstep(0.3, town.r, dt)) + 0.2 * near, 1);
   }
   function woodDensity(x, z) {
     colorAt(x, z, rgb);
     const green = rgb[1] - (rgb[0] + rgb[2]) / 2, bright = (rgb[0] + rgb[1] + rgb[2]) / 3;
-    return 0.12 + 0.75 * sstep(0.5, 0.74, fbm(x * 1.3 + 40, z * 1.3, 9)) + 0.45 * sstep(0.015, 0.06, green) * sstep(0.34, 0.16, bright);
+    return Math.min(0.04 + 0.35 * sstep(0.55, 0.78, fbm(x * 1.3 + 40, z * 1.3, 9)) + 0.6 * sstep(0.01, 0.05, green) * sstep(0.32, 0.14, bright)
+      + 0.7 * woodsAt(x, z), 1) * sstep(0.45, 0.3, bright);
+  }
+
+  // a house from its footprint: base on the uphill corner, a plinth down to the low side
+  function house(x, z, w, d, yaw, levels, kind, seed) {
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    let lo = Infinity, hi = -Infinity;
+    for (const [a, b] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      const g = groundAt(x + (a * w * c - b * d * s) * 0.0005, z + (a * w * s + b * d * c) * 0.0005);
+      lo = Math.min(lo, g); hi = Math.max(hi, g);
+    }
+    const drop = (hi - lo) * 1000;
+    const base = drop < 2.5 ? hi - 0.00005 : (hi + lo) / 2;
+    const v = kind === 1 || kind === 2 || w * d > 110 ? 3 : kind === 3 || w / d > 1.7 ? 0 : [0, 0, 0, 1, 2, 2][Math.floor(seed * 6)];
+    const tall = v === 3 ? (levels > 1 ? levels / 2 : 0.55) : 0.92 + seed * 0.16;
+    return { x, z, y: base, lo, plinth: (base - lo) * 1000 > 0.2, w, d, yaw, v, tall, levels,
+      flat: v === 3, wc: WALLS[Math.floor(seed * 977) % WALLS.length], rc: ROOFS[Math.floor(seed * 7919) % ROOFS.length] };
   }
 
   function makeChunk(ix, iz) {
     const r = mulberry(Math.floor(hash(ix, iz, 7) * 4294967296));
     const x0 = ix * CH, z0 = iz * CH, houses = [], trees = [];
-    const roadYaw = vnoise(ix * 0.35, iz * 0.35, 5) * Math.PI;
     const tree = (x, z, kind) => {
+      if (houses.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < ((Math.max(h.w, h.d) * 0.5 + 2) * 0.001) ** 2)) return;
       const y = groundAt(x, z);
       colorAt(x, z, rgb);
       const c = new THREE.Color().setRGB(rgb[0], rgb[1], rgb[2], THREE.SRGBColorSpace);
       const spin = r() * Math.PI * 2, lb = 0.8 + r() * 0.32;
       const lc = new THREE.Color(lb, lb * (0.97 + r() * 0.06), lb * (0.92 + r() * 0.1));
-      if (kind === 0) {        // eucalyptus: tall pale trunk, a narrow open blue-green crown
-        const th = 10 + r() * 10, cr = 2.2 + r() * 1.6;
-        trees.push({ kind, sp: "euc", ms: th / 18, lc, x, y, z, spin, tr: 0.22, th, cr: cr * 1.15, ch: 5.5 + r() * 4, bark: EUC_BARK, c: c.lerp(new THREE.Color("#4d6650"), 0.75).multiplyScalar(1.05 + r() * 0.3) });
+      if (kind === 0) {        // eucalyptus: tall trunk, a narrow open blue-green crown
+        const th = 9 + r() * 9, cr = 2.6 + r() * 1.6;
+        trees.push({ kind, sp: "euc", ms: (th + 6) / 21, lc, x, y, z, spin, tr: 0.22, th, cr, ch: 6 + r() * 4, bark: EUC_BARK, c: c.lerp(EUC_LEAF, 0.8).multiplyScalar(0.8 + r() * 0.3) });
       } else if (kind === 1) { // banana
         const sz = 1.3 + r() * 0.8;
-        trees.push({ kind, sp: "banana", ms: sz / 1.6, lc, x, y, z, spin, s: sz, c: c.lerp(new THREE.Color("#7fa443"), 0.75).multiplyScalar(1 + r() * 0.3) });
-      } else {                 // broadleaf: avocado, mango, ficus
-        const cr = 2.4 + r() * 2.6;
-        const cyp = r() < 0.22;
-        trees.push({ kind, sp: cyp ? "cypress" : "broad", ms: cyp ? 0.8 + r() * 0.5 : cr / 3.6, lc, x, y, z, spin, tr: 0.32, th: 2 + r() * 2, cr, ch: cr * (0.8 + r() * 0.35), bark: BARK, c: c.lerp(new THREE.Color("#3f6130"), 0.7).multiplyScalar(1 + r() * 0.35) });
+        trees.push({ kind, sp: "banana", ms: sz / 1.6, lc, x, y, z, spin, s: sz, c: c.lerp(BANANA_LEAF, 0.75).multiplyScalar(0.85 + r() * 0.3) });
+      } else {                 // broadleaf: avocado, mango, ficus; and cypress
+        const cr = 2.4 + r() * 2.6, cyp = r() < 0.22;
+        trees.push({ kind, sp: cyp ? "cypress" : "broad", ms: cyp ? 0.8 + r() * 0.5 : cr / 3.6, lc, x, y, z, spin, tr: 0.32, th: 2 + r() * 2, cr: cyp ? 1.8 : cr, ch: cyp ? 9 : cr * (0.8 + r() * 0.35), bark: BARK, c: c.lerp(cyp ? CYPRESS_LEAF : BROAD_LEAF, 0.75).multiplyScalar(0.85 + r() * 0.3) });
       }
     };
-    for (let n = 0; n < 70; n++) {
-      const x = x0 + r() * CH, z = z0 + r() * CH;
-      if (Math.abs(x) > half - 0.5 || Math.abs(z) > half - 0.5 || blocked(x, z, 0.02)) continue;
-      if (r() > houseDensity(x, z)) continue;
-      const sl = slope(x, z);
-      if (sl > 0.42) continue;
-      if (houses.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 0.014 ** 2)) continue;
-      const big = Math.hypot(x - town.x, z - town.z) < town.r * 0.6 && r() < 0.35;
-      const w = big ? 12 + r() * 14 : 6.5 + r() * 5, d = big ? 9 + r() * 8 : 5 + r() * 3;
-      const h = big ? 3.2 * (1 + Math.floor(r() * 2)) : 2.7 + r() * 0.6;
-      houses.push({ x, z, y: groundAt(x, z) - sl * Math.max(w, d) * 0.5 * M, sink: sl * Math.max(w, d) * 0.5, w, d, h,
-        rh: big ? 1.2 + r() * 0.8 : 1.3 + r() * 1.0, yaw: roadYaw + (r() < 0.5 ? 0 : Math.PI / 2) + (r() - 0.5) * 0.25,
-        wc: WALLS[Math.floor(r() * WALLS.length)], rc: ROOFS[Math.floor(r() * ROOFS.length)],
-        v: big ? (r() < 0.6 ? 3 : 1) : [0, 0, 0, 1, 2][Math.floor(r() * 5)], ms: 0.85 + r() * 0.35 });
-      for (let b = 0, nb = Math.floor(r() * 5); b < nb; b++) {
-        const a = r() * Math.PI * 2, dd = (9 + r() * 14) * M;
-        const bx = x + Math.cos(a) * dd, bz = z + Math.sin(a) * dd;
-        if (!blocked(bx, bz, 0.01)) tree(bx, bz, r() < 0.75 ? 1 : 2);
+    const isMapped = mapped(ix, iz);
+    if (isMapped) {
+      const dv = buildings.data, o = buildings.origin;
+      for (const i of osm.get(ix * 100000 + iz) || []) {
+        const x = (dv.getUint16(i * 8, true) - o) / 1000, z = (dv.getUint16(i * 8 + 2, true) - o) / 1000;
+        if (blocked(x, z, 0.005)) continue;
+        const k = dv.getUint8(i * 8 + 7);
+        houses.push(house(x, z, dv.getUint8(i * 8 + 4) / 2, dv.getUint8(i * 8 + 5) / 2, (dv.getUint8(i * 8 + 6) / 255) * Math.PI, k & 7, k >> 3, hash(i, 3, 11)));
       }
     }
-    for (let n = 0; n < 150; n++) {
+    // Where OpenStreetMap has no buildings, place them where the photo shows roofs. Inside a
+    // mapped area this only fills blocks it has not mapped yet: clear roofs, away from mapped houses.
+    const roadYaw = vnoise(ix * 0.35, iz * 0.35, 5) * Math.PI;
+    for (let n = 0; n < (isMapped ? 140 : 90); n++) {
+      const x = x0 + r() * CH, z = z0 + r() * CH;
+      if (Math.abs(x) > half - 0.5 || Math.abs(z) > half - 0.5 || blocked(x, z, 0.02)) continue;
+      if (r() > (isMapped ? sstep(0.3, 0.7, roofAt(x, z)) : houseDensity(x, z))) continue;
+      if (slope(x, z) > 0.42) continue;
+      const w = 6.5 + r() * 5, d = 5 + r() * 2.5;
+      const gap = isMapped ? 0.012 : 0;
+      if (houses.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < ((Math.max(h.w, h.d) + w) * 0.6 * 0.001 + gap) ** 2)) continue;
+      houses.push(house(x, z, w, d, roadYaw + (r() < 0.5 ? 0 : Math.PI / 2) + (r() - 0.5) * 0.25, 1, 0, r()));
+    }
+    for (const h of houses) for (let b = 0, nb = Math.floor(r() * 4); b < nb; b++) { // bananas and fruit trees by the houses
+      const a = r() * Math.PI * 2, dd = (Math.max(h.w, h.d) * 0.5 + 4 + r() * 12) * M;
+      const bx = h.x + Math.cos(a) * dd, bz = h.z + Math.sin(a) * dd;
+      if (!blocked(bx, bz, 0.01)) tree(bx, bz, r() < 0.75 ? 1 : 2);
+    }
+    for (let n = 0; n < 160; n++) {
       const x = x0 + r() * CH, z = z0 + r() * CH;
       if (Math.abs(x) > half - 0.5 || Math.abs(z) > half - 0.5 || blocked(x, z, 0.015)) continue;
       if (r() > woodDensity(x, z)) continue;
@@ -471,105 +605,113 @@ export function createScatter({ scene, groundAt, colorAt, half, keepOut, town, m
     }
     return { houses, trees };
   }
+  const cache = new Map();
   const chunk = (ix, iz) => {
     const key = ix * 100000 + iz;
     let c = cache.get(key);
     if (!c) {
       c = makeChunk(ix, iz);
       cache.set(key, c);
-      if (cache.size > 900) cache.delete(cache.keys().next().value);
+      if (cache.size > 1400) cache.delete(cache.keys().next().value);
     }
     return c;
   };
 
+  // ------------------------------------------------ filling the instances
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3();
-  let lastKey = null, shown = false, pending = false;
-  // new chunks are generated a few per frame, so entering the chase view never stalls
-  function rebuild(cx, cz) {
-    let nh = 0, nt = 0, nn = 0, nf = 0, nb = 0, made = 0;
-    const hn = [0, 0, 0, 0], tn = { euc: 0, broad: 0, cypress: 0, banana: 0 };
+  let last = null, shown = false, pending = false;
+  function rebuild(cam, focus) {
+    const n = { walls: 0, plinth: 0, trunks: 0, mid: 0, far: 0, banana: 0 }, hn = [0, 0, 0, 0], tn = { euc: 0, broad: 0, cypress: 0, banana: 0 };
+    let made = 0;
     pending = false;
     const span = Math.ceil(R_HOUSE / CH);
-    const icx = Math.floor(cx / CH), icz = Math.floor(cz / CH);
+    const icx = Math.floor(focus.x / CH), icz = Math.floor(focus.z / CH);
+    const near = (d, band) => d < band[1] + MARGIN, beyond = (d, band) => d > band[0] - MARGIN;
     for (let iz = icz - span; iz <= icz + span; iz++) for (let ix = icx - span; ix <= icx + span; ix++) {
-      const dxC = (ix + 0.5) * CH - cx, dzC = (iz + 0.5) * CH - cz;
-      if (Math.hypot(dxC, dzC) > R_HOUSE + CH) continue;
+      if (Math.hypot((ix + 0.5) * CH - focus.x, (iz + 0.5) * CH - focus.z) > R_HOUSE + CH) continue;
       if (Math.abs((ix + 0.5) * CH) > half || Math.abs((iz + 0.5) * CH) > half) continue;
       const key = ix * 100000 + iz;
-      if (!cache.has(key) && made >= 14) { pending = true; continue; }
+      if (!cache.has(key) && made >= 10) { pending = true; continue; }
       if (!cache.has(key)) made++;
       const c = chunk(ix, iz);
       for (const h of c.houses) {
-        if (nh >= MAXH) break;
-        const dist = Math.hypot(h.x - cx, h.z - cz);
-        if (dist > R_HOUSE) continue;
-        const f = sstep(R_HOUSE, R_HOUSE - 0.5, dist);
-        _q.setFromAxisAngle(UP, h.yaw);
-        if (HV) {
-          const V = HV[h.v], i = hn[h.v]++;
-          if (i >= 3000) continue;
-          _m.compose(_p.set(h.x, h.y, h.z), _q, _s.setScalar(h.ms * M * f));
-          V.walls.setMatrixAt(i, _m); V.walls.setColorAt(i, h.wc);
-          V.roof.setMatrixAt(i, _m); V.roof.setColorAt(i, h.rc);
-          V.trim.setMatrixAt(i, _m); V.trim.setColorAt(i, WHITE);
-          continue;
+        if (Math.hypot(h.x - focus.x, h.z - focus.z) > R_HOUSE) continue;
+        const dc = Math.hypot(h.x - cam.x, h.z - cam.z);
+        if (h.plinth && n.plinth < 30000) {
+          _q.setFromAxisAngle(UP, -h.yaw);
+          plinths.setMatrixAt(n.plinth, _m.compose(_p.set(h.x, h.lo - 0.0003, h.z), _q, _s.set((h.w + 0.3) * M, h.y - h.lo + 0.0003, (h.d + 0.3) * M)));
+          plinths.setColorAt(n.plinth++, PLINTH);
         }
-        walls.setMatrixAt(nh, _m.compose(_p.set(h.x, h.y, h.z), _q, _s.set(h.w * M * f, (h.h + h.sink) * M * f, h.d * M * f)));
-        walls.setColorAt(nh, h.wc);
-        const along = h.w >= h.d;
-        _q.setFromAxisAngle(UP, h.yaw + (along ? Math.PI / 2 : 0));
-        roofs.setMatrixAt(nh, _m.compose(_p.set(h.x, h.y + (h.h + h.sink) * M * f, h.z), _q,
-          _s.set(((along ? h.d : h.w) + 1) * M * f, h.rh * M * f, ((along ? h.w : h.d) + 1) * M * f)));
-        roofs.setColorAt(nh, h.rc);
-        nh++;
+        if (HV && near(dc, HOUSE_NEAR)) {
+          const V = HV[h.v], i = hn[h.v]++;
+          if (i < 6000) {
+            _q.setFromAxisAngle(UP, -h.yaw + V.turn);
+            _m.compose(_p.set(h.x, h.y, h.z), _q, V.turn ? _s.set((h.d / V.wid) * M, h.tall * M, (h.w / V.len) * M) : _s.set((h.w / V.len) * M, h.tall * M, (h.d / V.wid) * M));
+            V.walls.setMatrixAt(i, _m); V.walls.setColorAt(i, h.wc);
+            V.roof.setMatrixAt(i, _m); V.roof.setColorAt(i, h.rc);
+            V.trim.setMatrixAt(i, _m); V.trim.setColorAt(i, WHITE);
+          }
+        }
+        if (!beyond(dc, HOUSE_NEAR) || n.walls >= 50000) continue;
+        const wallH = (h.flat ? 3.2 * Math.max(h.levels, 1) : 2.9 * h.tall) * M;
+        _q.setFromAxisAngle(UP, -h.yaw);
+        walls.setMatrixAt(n.walls, _m.compose(_p.set(h.x, h.y, h.z), _q, _s.set(h.w * M, wallH, h.d * M)));
+        walls.setColorAt(n.walls, h.wc);
+        _q.setFromAxisAngle(UP, -h.yaw + Math.PI / 2); // the gable's ridge runs along the long side
+        roofs.setMatrixAt(n.walls, _m.compose(_p.set(h.x, h.y + wallH, h.z), _q, _s.set((h.d + 0.8) * M, (h.flat ? 0.3 : 1.2 + h.d * 0.12) * M, (h.w + 0.8) * M)));
+        roofs.setColorAt(n.walls++, h.rc);
       }
       for (const t of c.trees) {
-        const dist = Math.hypot(t.x - cx, t.z - cz);
-        if (dist > R_TREE) continue;
-        const f = sstep(R_TREE, R_TREE - 0.4, dist);
+        if (Math.hypot(t.x - focus.x, t.z - focus.z) > R_TREE) continue;
+        const dc = Math.hypot(t.x - cam.x, t.z - cam.z);
         _q.setFromAxisAngle(UP, t.spin);
-        if (SP && dist < (t.kind === 1 ? R_NEAR * 1.6 : R_NEAR)) {
+        if (SP && near(dc, TREE_NEAR)) {
           const S = SP[t.sp], i = tn[t.sp]++;
-          if (i >= 6000) continue;
-          _m.compose(_p.set(t.x, t.y - 0.15 * M, t.z), _q, _s.setScalar(t.ms * M * f));
-          S.bark.setMatrixAt(i, _m); S.bark.setColorAt(i, WHITE);
-          S.leaves.setMatrixAt(i, _m); S.leaves.setColorAt(i, t.lc);
+          if (i < 6000) {
+            _m.compose(_p.set(t.x, t.y - 0.15 * M, t.z), _q, _s.setScalar(t.ms * M));
+            S.bark.setMatrixAt(i, _m); S.bark.setColorAt(i, WHITE);
+            S.leaves.setMatrixAt(i, _m); S.leaves.setColorAt(i, t.lc);
+          }
+        }
+        if (t.kind === 1) { // banana plants: only close by
+          if (dc < 1.1 + MARGIN && (!SP || beyond(dc, TREE_NEAR)) && n.banana < 20000) {
+            bananas.setMatrixAt(n.banana, _m.compose(_p.set(t.x, t.y - 0.1 * M, t.z), _q, _s.setScalar(t.s * M)));
+            bananas.setColorAt(n.banana++, t.c);
+          }
           continue;
         }
-        if (t.kind === 1) {
-          if (nb >= MAXT || dist > R_NEAR * 1.6) continue; // small plants: only close by
-          bananas.setMatrixAt(nb, _m.compose(_p.set(t.x, t.y - 0.1 * M, t.z), _q, _s.setScalar(t.s * M * f)));
-          bananas.setColorAt(nb, t.c);
-          nb++;
-          continue;
+        if ((!SP || beyond(dc, TREE_NEAR)) && near(dc, TREE_MID) && n.mid < 20000) {
+          trunks.setMatrixAt(n.mid, _m.compose(_p.set(t.x, t.y - 0.3 * M, t.z), _q, _s.set(t.tr * 2 * M, (t.th + 0.3) * M, t.tr * 2 * M)));
+          trunks.setColorAt(n.mid, t.bark);
+          crownsM.setMatrixAt(n.mid, _m.compose(_p.set(t.x, t.y + (t.th + t.ch * 0.45) * M, t.z), _q, _s.set(t.cr * M, t.ch * M, t.cr * M)));
+          crownsM.setColorAt(n.mid++, t.c);
         }
-        if (nt >= MAXT) continue;
-        trunks.setMatrixAt(nt, _m.compose(_p.set(t.x, t.y - 0.3 * M, t.z), _q, _s.set(t.tr * 2 * M * f, (t.th + 0.3) * M * f, t.tr * 2 * M * f)));
-        trunks.setColorAt(nt, t.bark);
-        nt++;
-        const crowns = dist < R_NEAR ? crownsN : crownsF, n = dist < R_NEAR ? nn++ : nf++;
-        crowns.setMatrixAt(n, _m.compose(_p.set(t.x, t.y + (t.th + t.ch * 0.45) * M * f, t.z), _q, _s.set(t.cr * M * f, t.ch * M * f, t.cr * M * f)));
-        crowns.setColorAt(n, t.c);
+        if (beyond(dc, TREE_MID) && n.far < 40000) {
+          crownsF.setMatrixAt(n.far, _m.compose(_p.set(t.x, t.y + (t.th + t.ch * 0.4) * M, t.z), _q, _s.set(t.cr * 1.05 * M, t.ch * 0.62 * M, t.cr * 1.05 * M)));
+          crownsF.setColorAt(n.far++, t.c);
+        }
       }
     }
-    const counts = [[walls, nh], [roofs, nh], [trunks, nt], [crownsN, nn], [crownsF, nf], [bananas, nb]];
-    if (HV) HV.forEach((V, v) => counts.push([V.walls, hn[v]], [V.roof, hn[v]], [V.trim, hn[v]]));
-    if (SP) for (const sp in SP) counts.push([SP[sp].bark, tn[sp]], [SP[sp].leaves, tn[sp]]);
-    for (const [im, n0] of counts) {
-      const n = Math.min(n0, im.instanceMatrix.count);
-      im.count = n;
+    const counts = [[walls, n.walls], [roofs, n.walls], [plinths, n.plinth], [trunks, n.mid], [crownsM, n.mid], [crownsF, n.far], [bananas, n.banana]];
+    if (HV) HV.forEach((V, v) => counts.push([V.walls, Math.min(hn[v], 6000)], [V.roof, Math.min(hn[v], 6000)], [V.trim, Math.min(hn[v], 6000)]));
+    if (SP) for (const sp in SP) counts.push([SP[sp].bark, Math.min(tn[sp], 6000)], [SP[sp].leaves, Math.min(tn[sp], 6000)]);
+    for (const [im, k] of counts) {
+      im.count = Math.min(k, im.instanceMatrix.count);
       im.instanceMatrix.needsUpdate = true;
       if (im.instanceColor) im.instanceColor.needsUpdate = true;
+      if (im.count) im.computeBoundingSphere(); // so the camera and the sun's shadow camera can cull it
     }
   }
   return {
-    update(cam, on) {
-      for (const im of allMeshes) im.visible = on;
+    update(cam, focus, on) {
+      for (const im of all) im.visible = on && im.count > 0;
       if (!on) { shown = false; return; }
-      const key = `${Math.floor(cam.x / 0.25)},${Math.floor(cam.z / 0.25)}`;
-      if (key === lastKey && shown && !pending) return;
-      lastKey = key; shown = true;
-      rebuild(cam.x, cam.z);
+      scatterU.uFocus.value.set(focus.x, focus.z);
+      if (shown && !pending && last && Math.hypot(cam.x - last.cx, cam.z - last.cz) < 0.2 && Math.hypot(focus.x - last.fx, focus.z - last.fz) < 0.3) return;
+      last = { cx: cam.x, cz: cam.z, fx: focus.x, fz: focus.z };
+      shown = true;
+      rebuild(cam, focus);
+      for (const im of all) im.visible = im.count > 0;
     },
   };
 }
