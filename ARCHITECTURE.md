@@ -28,7 +28,7 @@ Registers `DroneDelivery-v0` and exports the constants the trainers and the view
 
 #### [environment/rendering.py](environment/rendering.py)
 
-`Viewer`: a standard-library HTTP server for the web page, with `/scene`, `/state`, a Server-Sent Events stream at `/events` and `POST /api/act` for the loaded policy. `scene_description` and `step_message` define the JSON every consumer reads.
+`Viewer`: a standard-library HTTP server for the web page, with `/scene`, `/state`, a Server-Sent Events stream at `/events` and `POST /api/act` for the loaded policy. When recording it also accepts `POST /api/frame` and replays the shift to a page that connects late. `scene_description` and `step_message` define the JSON every consumer reads.
 
 ### Training [PYTHON · TORCHRL]
 
@@ -52,17 +52,23 @@ Reads every run's logs and writes the figures in `assets/plots/`, the tables in 
 
 #### [environment/web](environment/web)
 
-`index.html` and `style.css` hold the shift card, the decision log and toasts, set in Space Grotesk. `app.js` reads the event stream, queues steps and animates each one. `world.js` (`createWorld`) builds the scene: sky and sun from the shift clock, terraced terrain shader, water, vegetation, villages, roads, mist, clouds, traffic, wind effects, the sites, the drone and post-processing.
+`index.html` and `style.css` hold the shift card, the decision log and toasts, set in Space Grotesk. `app.js` reads the event stream, queues steps and animates each one; with `?record` it runs on a fixed 30 fps clock, follows the drone with a chase camera and uploads every frame. `world.js` (`createWorld`) builds the scene: sky and sun from the shift clock, terraced terrain shader, water, vegetation, villages, roads, mist, clouds, traffic, wind effects, the sites, the drone and post-processing.
 
 ### Entry Points [PYTHON]
 
 #### [main.py](main.py) and [play.py](play.py)
 
-Load the best agent (or `--algo`), run shifts on unseen seeds, print each decision and publish it to the viewer. `play.py` calls `main.main`.
+Load the best agent (or `--algo`), run shifts on unseen seeds, print each decision and publish it to the viewer. `--record DIR` saves the viewer's frames for a video. `play.py` calls `main.main`.
 
 #### [tests](tests)
 
 `test_env.py`: spaces, determinism, the action mask, flight energy, deliveries, shift length, the crash penalty and the baseline ordering.
+
+### Write-ups [MARKDOWN]
+
+#### [docs](docs), [results](results) and [videos](videos)
+
+`docs/` explains the environment, the agents, the experiments and the results, and holds the video script. `results/` has one file per algorithm with its 10 runs and what each did. `videos/` holds the README's preview GIF and a full recorded shift.
 
 ## External Pieces
 
@@ -75,6 +81,7 @@ Load the best agent (or `--algo`), run shifts on unseen seeds, print each decisi
 
 - `uv` manages Python and dependencies (`pyproject.toml`, `uv.lock`, `.python-version`).
 - `docs/video_script.md` is the plan for the 5-minute demonstration video.
+- `ffmpeg` turns recorded frames into `videos/` (the command is printed at the end of `main.py --record`).
 
 # Workflows
 
@@ -89,6 +96,10 @@ Load the best agent (or `--algo`), run shifts on unseen seeds, print each decisi
 ## What does watching an agent look like?
 
 `main.py` starts `Viewer` and opens the browser. For every decision it steps the env, prints a line, appends to `logs/demo/<agent>_seed<seed>.jsonl` and publishes a `step_message`, then waits for the animation. `app.js` turns each message into a flight, hold, recharge or load in `world.js` and updates the card.
+
+## What does recording a video look like?
+
+`uv run main.py --record DIR --no-browser` plays the shifts without waiting and keeps every step. Opening `http://127.0.0.1:8765/?record` (headless Chrome works) replays them on a fixed 30 fps clock with a chase camera, uploading each frame to `DIR`. The script exits once frames stop arriving and prints the `ffmpeg` command.
 
 ## Development
 

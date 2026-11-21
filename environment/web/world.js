@@ -56,8 +56,9 @@ function distToRiver(x, z) {
 }
 
 // ------------------------------------------------------------ world
-export function createWorld(container) {
-  const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+export function createWorld(container, { record = false } = {}) {
+  let clockNow = 0; // the time update() was last called with, real or recorded
+  const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance", preserveDrawingBuffer: record });
   const dpr = Math.min(window.devicePixelRatio, 2);
   renderer.setPixelRatio(dpr);
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -857,7 +858,7 @@ export function createWorld(container) {
 
   // ---------------------------------------------------------- effects
   const effects = [];
-  function addEffect(obj, dur, update) { scene.add(obj); effects.push({ obj, t0: performance.now(), dur, update }); }
+  function addEffect(obj, dur, update) { scene.add(obj); effects.push({ obj, t0: clockNow, dur, update }); }
   function dropParcel(i, emergency) {
     const s = SITES[i];
     const g = new THREE.Group();
@@ -929,7 +930,7 @@ export function createWorld(container) {
     drone.rotateY(-cross * U.uWindStrength.value * 0.35);
     const turn = Math.atan2(_prevFwd.x * _fwd.z - _prevFwd.z * _fwd.x, _prevFwd.x * _fwd.x + _prevFwd.z * _fwd.z);
     bank += (THREE.MathUtils.clamp(-turn / Math.max(dt, 1e-3) * 0.35, -0.6, 0.6) - bank) * Math.min(dt * 4, 1);
-    drone.rotateZ(bank + Math.sin(performance.now() / 260) * 0.03 * U.uWindStrength.value);
+    drone.rotateZ(bank + Math.sin(clockNow / 260) * 0.03 * U.uWindStrength.value);
     _prevFwd.copy(_fwd);
   }
   function placeDrone(i) { drone.position.copy(sitePoint(i)); drone.rotation.set(0, 0, 0); }
@@ -957,7 +958,17 @@ export function createWorld(container) {
   let slowSince = 0, aoOn = true, startedAt = 0;
   if (new URLSearchParams(location.search).get("quality") === "low") { ao.enabled = false; aoOn = false; composer.setPixelRatio(1); }
   let ready = false;
+  // a chase camera for recordings: trails the drone and slowly circles it
+  const _offset = new THREE.Vector3();
+  function chase(now) {
+    const a = now / 1000 * 0.06 + 0.8;
+    _offset.set(Math.cos(a) * 9, 5.5, Math.sin(a) * 9);
+    camera.position.lerp(_offset.add(drone.position), 0.04);
+    controls.target.lerp(drone.position, 0.12);
+  }
+
   function update(now, dt, followDrone) {
+    clockNow = now;
     if (!ready) { controls.update(); composer.render(); return; }
     U.uTime.value = now / 1000;
     const ws = U.uWindStrength.value;
@@ -1005,18 +1016,19 @@ export function createWorld(container) {
       fx.update(k);
       if (k >= 1) { scene.remove(fx.obj); effects.splice(i, 1); }
     }
-    if (followDrone) controls.target.lerp(drone.position, 0.08);
+    if (followDrone === "chase") chase(now);
+    else if (followDrone) controls.target.lerp(drone.position, 0.08);
     controls.update();
     composer.render();
     labels.render(scene, camera);
     // drop ambient occlusion if the machine cannot hold ~35 fps
     if (!startedAt) startedAt = now;
     if (dt > 0.029) { if (!slowSince) slowSince = now; } else slowSince = 0;
-    if (aoOn && slowSince && now - slowSince > 3000 && now - startedAt > 5000) { ao.enabled = false; aoOn = false; }
+    if (!record && aoOn && slowSince && now - slowSince > 3000 && now - startedAt > 5000) { ao.enabled = false; aoOn = false; }
   }
 
   return {
-    scene, camera, controls, drone, build, update, setTime, setRequest, setCharging, setCargo, setWind,
+    renderer, scene, camera, controls, drone, build, update, setTime, setRequest, setCharging, setCargo, setWind,
     placeDrone, flyDrone, sitePoint, flightCurve, dropParcel, smoke, loadParcel, heightAt,
     toggleOrbit: () => (controls.autoRotate = !controls.autoRotate),
   };

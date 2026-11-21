@@ -93,6 +93,7 @@ def main():
     ap.add_argument("--fast", action="store_true", help="do not wait for animations")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true", help="start the viewer without opening a browser tab")
+    ap.add_argument("--record", metavar="DIR", help="save every rendered frame (30 fps, chase camera) to DIR as JPEGs")
     args = ap.parse_args()
 
     algo = best_algo() if args.algo == "best" else args.algo
@@ -101,7 +102,8 @@ def main():
     if not args.no_viewer:
         viewer = Viewer(port=args.port, open_browser=not args.no_browser,
                         policy_fn=None if algo in ("heuristic", "random") else
-                        (lambda obs: policy(None, obs)))
+                        (lambda obs: policy(None, obs)),
+                        record_dir=Path(args.record) if args.record else None)
         print(f"3D viewer: {viewer.url}  (waiting for the browser to connect)")
         viewer.wait_for_client(30)
         time.sleep(1.5)  # let the page build the terrain
@@ -117,7 +119,7 @@ def main():
         if viewer:
             viewer.set_scene(scene_description(env, label, note))
             viewer.publish("episode_start", {"episode": ep + 1, "seed": seed, "snapshot": env.snapshot()})
-            time.sleep(1.0 if not args.fast else 0)
+            time.sleep(1.0 if not (args.fast or args.record) else 0)
         print(f"=== Shift {ep + 1}/{args.episodes} · seed {seed} · battery {env.battery:.0f}% · "
               f"open: {fmt_requests(env.snapshot())}")
         jsonl = open(log_dir / f"{algo}_seed{seed}.jsonl", "w")
@@ -129,7 +131,7 @@ def main():
             done = term or trunc
             step += 1
             minutes = max(env.t - t0, 0.5)
-            anim_ms = 0 if args.fast else int(minutes * args.ms_per_minute)
+            anim_ms = 0 if args.fast and not args.record else int(minutes * args.ms_per_minute)
             msg = step_message(env, episode=ep + 1, step=step, action=action, reward=reward,
                                anim_ms=anim_ms, agent=label)
             jsonl.write(json.dumps(msg) + "\n")
@@ -141,7 +143,7 @@ def main():
                   f"open: {fmt_requests(snap)}" + (f"  [{', '.join(notes)}]" if notes else ""))
             if viewer:
                 viewer.publish("step", msg)
-                if anim_ms:
+                if anim_ms and not args.record:
                     time.sleep(anim_ms / 1000)
         jsonl.close()
         st = env.stats.as_dict()
@@ -149,11 +151,22 @@ def main():
         print(f"--- shift return {env.total_reward:+.1f} · emergencies {st['delivered_emergency']} delivered / "
               f"{st['missed_emergency']} missed · routine {st['delivered_routine']} / {st['missed_routine']} · "
               f"service rate {st['service_rate']:.0%} · crashed {st['crashed']} · back at hub {not st['stranded']}\n")
-        if viewer and not args.fast:
+        if viewer and not (args.fast or args.record):
             time.sleep(2.5)
 
     rets = [s[1] for s in summary]
     print(f"Mean return over {len(rets)} unseen shifts: {np.mean(rets):+.1f} (± {np.std(rets):.1f})")
+    if viewer and args.record:
+        seen, still = -1, 0
+        while still < 8:  # the browser renders at its own pace; stop once frames stop arriving
+            time.sleep(1)
+            n = getattr(viewer, "frames_received", 0)
+            still = still + 1 if n == seen and n > 0 else 0
+            seen = n
+        viewer.close()
+        print(f"Recorded {seen} frames in {args.record}. Make a video with:\n"
+              f"  ffmpeg -framerate 30 -i {args.record}/frame_%05d.jpg -c:v libx264 -pix_fmt yuv420p -crf 20 shift.mp4")
+        return
     if viewer:
         print(f"Viewer still running at {viewer.url}. Press Ctrl+C to quit.")
         try:
