@@ -3,9 +3,7 @@
 // decision log and toasts on top.
 import { createWorld } from "./world.js";
 
-const RECORD = new URLSearchParams(location.search).has("record");
-const world = createWorld(document.getElementById("scene"), { record: RECORD });
-let NOW = 0; // the clock every animation reads: real time, or 30 fps steps while recording
+const world = createWorld(document.getElementById("scene"));
 window.__world = world; // for debugging from the console
 let SITES = [];
 
@@ -108,18 +106,18 @@ function startStep(msg) {
     setRequests(snap);
     prevBattery = snap.battery;
     prevT = snap.t;
-    anim = { msg, t0: NOW, dur: 900, reset: true };
+    anim = { msg, t0: performance.now(), dur: 900, reset: true };
     return;
   }
-  const dur = Math.max(msg.anim_ms, 120) * (!RECORD && queue.length > 4 ? 0.3 : 1);
+  const dur = Math.max(msg.anim_ms, 120) * (queue.length > 4 ? 0.3 : 1);
   const ev = snap.events || [];
   const flight = ev.find((e) => e.type === "flight");
   const crash = ev.find((e) => e.type === "crash");
-  anim = { msg, t0: NOW, dur, curve: null, loiter: null, b0: prevBattery, b1: snap.battery, t0sim: prevT, t1sim: snap.t };
+  anim = { msg, t0: performance.now(), dur, curve: null, loiter: null, b0: prevBattery, b1: snap.battery, t0sim: prevT, t1sim: snap.t };
   if (flight) anim.curve = world.flightCurve(flight.from, flight.to);
   else if (crash) anim.curve = world.flightCurve(crash.from, crash.to, Math.max(crash.fraction, 0.02));
   else if (ev.some((e) => e.type === "hold") && snap.loc !== 0) anim.loiter = world.sitePoint(snap.loc);
-  if (ev.some((e) => e.type === "recharge")) world.setCharging(NOW + dur);
+  if (ev.some((e) => e.type === "recharge")) world.setCharging(performance.now() + dur);
   if (ev.some((e) => e.type === "load")) world.loadParcel();
   for (const e of ev) {
     if (e.type === "request" && e.emergency) toast(`Emergency request at ${SITES[e.at].name}`, "emergency");
@@ -167,23 +165,13 @@ function tickStep(now, dt) {
   if (k >= 1) finishStep();
 }
 
-let last = performance.now(), frameNo = 0, uploading = 0;
+let last = performance.now();
 function frame(now) {
   requestAnimationFrame(frame);
-  if (RECORD) {
-    if (uploading > 2 || (!anim && !queue.length)) return; // wait for the server, and for steps
-    now = frameNo * (1000 / 30);
-  }
-  const dt = RECORD ? 1 / 30 : Math.min((now - last) / 1000, 0.05);
+  const dt = Math.min((now - last) / 1000, 0.05);
   last = now;
-  NOW = now;
   tickStep(now, dt);
-  world.update(now, dt, RECORD ? "chase" : follow);
-  if (RECORD) {
-    const n = frameNo++;
-    uploading++;
-    world.renderer.domElement.toBlob((b) => fetch(`/api/frame?n=${n}`, { method: "POST", body: b }).finally(() => uploading--), "image/jpeg", 0.9);
-  }
+  world.update(now, dt, follow);
 }
 
 // ---------------------------------------------------------------- data

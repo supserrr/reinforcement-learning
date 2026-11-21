@@ -76,11 +76,7 @@ class _QuietServer(ThreadingHTTPServer):
 
 class Viewer:
     def __init__(self, port: int = 8765, open_browser: bool = True,
-                 policy_fn: Callable[[dict], int] | None = None, record_dir: Path | None = None):
-        self.record_dir = record_dir
-        self.history: list[tuple[str, str]] = []  # replayed to a recording page that connects late
-        if record_dir:
-            record_dir.mkdir(parents=True, exist_ok=True)
+                 policy_fn: Callable[[dict], int] | None = None):
         self.clients: list[queue.Queue] = []
         self.lock = threading.Lock()
         self.scene: dict | None = None
@@ -93,7 +89,7 @@ class Viewer:
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         if open_browser:
-            webbrowser.open(self.url + ("?record" if record_dir else ""))
+            webbrowser.open(self.url)
 
     @property
     def url(self) -> str:
@@ -107,8 +103,6 @@ class Viewer:
         if kind == "step":
             self.latest = payload
         data = json.dumps(payload)
-        if self.record_dir and kind in ("episode_start", "step"):
-            self.history.append((kind, data))
         with self.lock:
             for q in list(self.clients):
                 q.put((kind, data))
@@ -157,12 +151,6 @@ class _Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self):
-        if self.path.startswith("/api/frame") and self.viewer.record_dir:
-            n = int(self.path.split("n=")[-1])
-            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            (self.viewer.record_dir / f"frame_{n:05d}.jpg").write_bytes(body)
-            self.viewer.frames_received = max(getattr(self.viewer, "frames_received", 0), n + 1)
-            return self._json({"ok": True})
         if self.path != "/api/act":
             return self._json({"error": "not found"}, 404)
         if self.viewer.policy_fn is None:
@@ -187,8 +175,6 @@ class _Handler(SimpleHTTPRequestHandler):
         try:
             if self.viewer.scene:
                 q.put(("scene", json.dumps(self.viewer.scene)))
-            for item in list(self.viewer.history):
-                q.put(item)
             while True:
                 try:
                     kind, data = q.get(timeout=10)
