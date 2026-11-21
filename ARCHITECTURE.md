@@ -1,6 +1,6 @@
 # The Drone Delivery RL Architecture
 
-<https://github.com/supserrr/shima_serein_rl_summative>
+<https://github.com/supserrr/reinforcement-learning>
 
 ## Introduction
 
