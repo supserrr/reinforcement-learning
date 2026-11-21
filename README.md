@@ -43,7 +43,7 @@ uv run main.py
 **Start state:** the drone at the hub with 70–100% battery, no cargo, up to 2 open requests and a random wind.
 **Terminal conditions:** the shift reaches 480 minutes, or the drone crashes.
 
-**Visualisation:** `environment/rendering.py` serves a three.js scene (`environment/web/`) of the hills, the hub, the health centres and the drone, updated over Server-Sent Events as the agent acts.
+**Visualisation:** `environment/rendering.py` serves a three.js scene (`environment/web/`) updated over Server-Sent Events as the agent acts: real Sentinel-2 imagery of Muhanga draped over SRTM elevation (×4.5 vertical), the hub and health centres as map pins at their stylised positions, and a fixed-wing delivery drone that parachutes each package. The map is baked into `environment/web/map/` by `scripts/bake_map.py`, so the viewer runs offline. Imagery: Sentinel-2 cloudless 2025 by EOX (contains modified Copernicus Sentinel data), CC BY-NC-SA 4.0; elevation: SRTM via AWS Terrain Tiles.
 
 ## Training
 
@@ -84,7 +84,9 @@ All 40 runs, with their hyperparameters and results, are in `logs/<algo>/sweep_s
 │   ├── __init__.py
 │   ├── custom_env.py
 │   ├── rendering.py
-│   └── web/                 three.js visualisation
+│   └── web/                 three.js visualisation; map/ holds the baked imagery and elevation
+├── scripts/
+│   └── bake_map.py          downloads and bakes the viewer's map
 ├── training/
 │   ├── __init__.py
 │   ├── dqn_training.py

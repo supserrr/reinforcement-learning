@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#b9cfe0">
+<meta name="theme-color" content="#0b1113">
 <title>Drone Delivery RL</title>
 <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="style.css">
@@ -16,43 +16,132 @@
 </head>
 <body>
 <div id="scene"></div>
+<div class="shade" aria-hidden="true"></div>
 
-<section class="card shift" aria-label="Shift">
-  <h1 id="agent">Waiting for Agent</h1>
+<!-- top left: brand, back to the overview, title -->
+<div class="brand">
+  <span class="logo" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 3.2c.7 0 1.1.6 1.1 1.4v4.6l7.4 2.9c.4.2.7.6.7 1v1.1l-8.1-1.6v4.3l2.2 1.6v1.3L12 19l-3.3.8v-1.3l2.2-1.6v-4.3l-8.1 1.6v-1.1c0-.4.3-.8.7-1l7.4-2.9V4.6c0-.8.4-1.4 1.1-1.4Z"/></svg>
+  </span>
+  <span class="brand-name">Drone Delivery</span>
+</div>
+<button class="round ring back" id="overview" type="button" aria-label="Back to the overview">
+  <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M13 8H3m4-4L3 8l4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</button>
+<h1 class="title"><span>Shift</span> <span class="dim" id="shift-no"></span></h1>
 
-  <div class="clock-row">
-    <span class="clock" id="clock">08:00</span>
-    <span class="meta" id="episode"></span>
-  </div>
-  <div class="progress" aria-hidden="true"><div id="timeline-fill"></div></div>
-
-  <dl class="rows">
-    <div class="row battery">
-      <dt>Battery</dt>
-      <dd><span class="bar" aria-hidden="true"><span id="battery-fill"></span></span><span class="num" id="battery">100<small>%</small></span></dd>
-    </div>
-    <div class="row"><dt>Cargo</dt><dd class="num" id="cargo">0 of 2</dd></div>
-    <div class="row"><dt>Wind</dt><dd class="num" id="wind">0<small>km/h</small></dd></div>
-    <div class="row"><dt>Return</dt><dd class="num strong" id="score">0.0</dd></div>
-  </dl>
-
-  <table class="tally">
-    <thead><tr><th></th><th>Delivered</th><th>Missed</th></tr></thead>
-    <tbody>
-      <tr><th>Emergency</th><td class="num" id="d-e">0</td><td class="num" id="m-e">0</td></tr>
-      <tr><th>Routine</th><td class="num" id="d-r">0</td><td class="num" id="m-r">0</td></tr>
-    </tbody>
-  </table>
-
-  <p class="hint">Press F to follow the drone, O to orbit</p>
-</section>
-
-<section class="card decisions" aria-label="Decisions">
-  <h2>Decisions</h2>
-  <ol id="log"></ol>
-</section>
+<!-- top centre: which agent is flying -->
+<nav class="tabs glass" aria-label="Agent">
+  <span data-agent="DQN">DQN</span>
+  <span data-agent="REINFORCE">REINFORCE</span>
+  <span data-agent="PPO">PPO</span>
+  <span data-agent="A2C">A2C</span>
+  <span data-agent="Hand-Written">Baseline</span>
+</nav>
 
 <div id="toasts" role="status" aria-live="polite"></div>
+
+<!-- left: find a site, camera tools -->
+<div class="tools">
+  <label class="search glass">
+    <span class="visually-hidden">Find a site</span>
+    <input id="find" list="site-list" placeholder="Find a site" autocomplete="off" spellcheck="false">
+    <datalist id="site-list"></datalist>
+  </label>
+  <div class="tray glass">
+    <button type="button" id="btn-follow" aria-pressed="false">Follow</button>
+    <button type="button" id="btn-orbit" aria-pressed="false">Orbit</button>
+    <button type="button" id="btn-hub">Hub</button>
+    <button type="button" id="btn-labels" aria-pressed="true">Labels</button>
+  </div>
+</div>
+
+<!-- right: zoom -->
+<div class="zoom">
+  <button class="round ring" id="zoom-in" type="button" aria-label="Zoom in">
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+  </button>
+  <button class="round ring" id="zoom-out" type="button" aria-label="Zoom out">
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+  </button>
+</div>
+
+<!-- bottom: the dock of cards -->
+<section class="dock" aria-label="Shift">
+  <article class="card location">
+    <svg class="minimap" id="minimap" viewBox="0 0 220 120" preserveAspectRatio="xMidYMid slice" aria-hidden="true"></svg>
+    <header><span class="eyebrow">Location</span><span class="arrow" aria-hidden="true"></span></header>
+    <dl class="fields">
+      <div><dt>Position</dt><dd id="f-pos">Muhanga Hub</dd></div>
+      <div><dt>Elevation</dt><dd id="f-elev">1,850 m</dd></div>
+      <div><dt>District</dt><dd>Muhanga</dd></div>
+      <div><dt>Flown</dt><dd id="f-km">0 km</dd></div>
+    </dl>
+  </article>
+
+  <article class="card status">
+    <header><span class="eyebrow">Shift status</span><span class="arrow" aria-hidden="true"></span></header>
+    <div class="beacon" aria-hidden="true">
+      <span class="state" id="state">At hub</span>
+      <i></i><i></i><i></i><i></i>
+    </div>
+    <dl class="fields">
+      <div><dt>Clock</dt><dd id="clock">08:00</dd></div>
+      <div><dt>Seed</dt><dd id="f-seed">–</dd></div>
+      <div><dt>Action</dt><dd id="f-action">Waiting</dd></div>
+      <div><dt>End</dt><dd>16:00</dd></div>
+    </dl>
+  </article>
+
+  <article class="card cost">
+    <header><span class="eyebrow">Return</span><span class="arrow" aria-hidden="true"></span></header>
+    <div class="ticks" id="ticks" aria-hidden="true"></div>
+    <div class="cost-row">
+      <span class="big num" id="score">0.0</span>
+      <span class="pie" id="pie" role="img" aria-label="Shift 0% done"></span>
+    </div>
+  </article>
+
+  <div class="tiles">
+    <div class="tile glass"><span class="eyebrow">Battery</span><span class="num" id="battery">100%</span></div>
+    <div class="tile glass"><span class="eyebrow">Cargo</span><span class="num" id="cargo">0 of 2</span></div>
+    <div class="tile glass"><span class="eyebrow">Wind</span><span class="num" id="wind">0 km/h</span></div>
+  </div>
+
+  <article class="card details">
+    <header><span class="eyebrow">Deliveries</span><span class="arrow" aria-hidden="true"></span></header>
+    <div class="radar" aria-hidden="true"><span class="radar-tag" id="radar-site">Muhanga Hub</span></div>
+    <dl class="fields">
+      <div><dt>Emergency</dt><dd class="num" id="d-e">0</dd></div>
+      <div><dt>Missed</dt><dd class="num" id="m-e">0</dd></div>
+      <div><dt>Routine</dt><dd class="num" id="d-r">0</dd></div>
+      <div><dt>Missed</dt><dd class="num" id="m-r">0</dd></div>
+    </dl>
+  </article>
+
+  <article class="card decisions">
+    <header><span class="eyebrow">Decisions</span><span class="arrow" aria-hidden="true"></span></header>
+    <ol id="log"></ol>
+  </article>
+</section>
+
+<!-- the destination card, anchored over a site by world.js -->
+<div class="popup" id="popup">
+  <div class="popup-card glass">
+    <p class="popup-title"><span id="pp-name">Site</span> · <span id="pp-kind">Deliver</span></p>
+    <dl class="popup-fields">
+      <div><dt>Request</dt><dd id="pp-req">None</dd></div>
+      <div><dt>Flight</dt><dd id="pp-flight">0 km</dd></div>
+    </dl>
+  </div>
+  <div class="popup-pill">
+    <span class="knob" aria-hidden="true"><svg viewBox="0 0 16 16" width="10" height="10"><path d="M8 3v10m-4-4 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+    <span class="pill-label">Delivery reward</span>
+    <span class="num" id="pp-reward">+10.0</span>
+  </div>
+</div>
+
+<p class="credit">Imagery Sentinel-2 cloudless 2025 by EOX (Copernicus Sentinel data), CC BY-NC-SA 4.0 · Elevation SRTM via AWS Terrain Tiles</p>
 <script type="module" src="app.js"></script>
 </body>
 </html>

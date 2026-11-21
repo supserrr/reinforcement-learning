@@ -1,0 +1,28 @@
+{
+  "center": {
+    "lat": -2.0845,
+    "lon": 29.7563
+  },
+  "note": "x east and y north in km from the center; heightmaps are uint16 metres, row 0 at the north edge",
+  "layers": {
+    "inner": {
+      "half_km": 32.0,
+      "image": "inner.jpg",
+      "image_px": 6144,
+      "height": "inner-height.bin",
+      "height_px": 1024,
+      "min_m": 1201,
+      "max_m": 2824
+    },
+    "outer": {
+      "half_km": 100.0,
+      "image": "outer.jpg",
+      "image_px": 2048,
+      "height": "outer-height.bin",
+      "height_px": 1024,
+      "min_m": 810,
+      "max_m": 4460
+    }
+  },
+  "attribution": "Imagery: Sentinel-2 cloudless 2025 by EOX (contains modified Copernicus Sentinel data 2025), CC BY-NC-SA 4.0. Elevation: AWS Terrain Tiles (SRTM, NASA)."
+}
