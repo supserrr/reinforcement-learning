@@ -2,7 +2,7 @@
 
 Summative assignment, Machine Learning Techniques. Shima Serein.
 
-A custom environment in which a delivery drone serves six rural health centres from a hub in Muhanga District, Rwanda, during an 8-hour shift. Requests for blood and emergency medicine arrive at random with deadlines. Four agents are trained on it with TorchRL: DQN, REINFORCE, PPO and A2C.
+A drone delivers blood and emergency medicine from a hub in Muhanga District, Rwanda, to six rural health centres over an 8-hour shift. Requests arrive at random with deadlines. DQN, REINFORCE, PPO and A2C are trained on it with TorchRL.
 
 ## Run
 
@@ -11,64 +11,60 @@ uv sync
 uv run main.py
 ```
 
-`main.py` loads the agent with the best validation score (PPO; on the test shifts it ties with DQN), opens the three.js visualisation in the browser and prints every decision in the terminal. `uv run play.py` does the same.
-
-In the viewer, **Follow** (or `F`) flies the camera down behind the drone for a third-person view over the hills, and cuts to ground cameras for each catapult launch, parachute drop and wire landing; drag to look around (or leave a ground shot), scroll or use the zoom buttons to move closer, and press `F` again to climb back to the map. The speed buttons (or `[` and `]`) set the playback pace from ½× to 4×; the agent waits for the page to finish each step, so the terminal log stays in step with the animation.
+This plays the best agent in a three.js viewer in the browser and prints every decision in the terminal. `uv run play.py` does the same. In the viewer, `F` follows the drone and `[` / `]` change the speed (½× to 4×).
 
 | Option | Effect |
 |---|---|
-| `--algo dqn` | play another agent: `dqn`, `ppo`, `a2c`, `reinforce`, or `heuristic` for the hand-written baseline |
-| `--episodes 3` | number of shifts to play |
-| `--config busy` | a day with 50% more requests (`windy`: 60% stronger wind) |
-| `--no-viewer --fast` | terminal only, no animation |
+| `--algo dqn` | another agent: `dqn`, `ppo`, `a2c`, `reinforce` or `heuristic` (hand-written baseline) |
+| `--episodes 3` | number of shifts |
+| `--config busy` | 50% more requests (`windy`: 60% stronger wind) |
+| `--no-viewer --fast` | terminal only |
 
 ## Environment
 
-`environment/custom_env.py`, Gymnasium API, registered as `DroneDelivery-v0`. Each step is one decision; the clock moves on by the time that decision takes.
+`environment/custom_env.py`, a Gymnasium environment registered as `DroneDelivery-v0`. Each step is one decision, and the clock moves on by the time it takes. Battery, cargo (up to 2 packages), position and open requests carry over between steps. Flight energy depends on distance, wind, payload and the climb over the real terrain.
 
-**Flights fly real operations.** Leaving the hub is a catapult launch (+1 min, +0.5% battery); arriving at a centre is a descent to 35 m over its drop zone for the parachute release (+0.5 min, +0.3%); arriving at the hub is the approach circuit into the recovery wire (+2 min, +0.8%). Flight energy counts the distance, the wind, the payload and every metre climbed on a terrain-following route about 120 m over the real hills (SRTM; `scripts/bake_routes.py` bakes the climbs and the site elevations).
-
-**Actions (10):** Hold, Return to Hub, Deliver to one of the 6 health centres, Recharge, Load Package. An action mask in the observation removes commands the drone cannot carry out (flights the battery cannot finish, deliveries with no package, charging or loading away from the hub).
-
-**Observation (38 values in [−1, 1]):** drone location (one-hot), battery, cargo, shift time, wind speed and direction, each centre's open request, emergency flag and time left, and the battery needed to reach each site and return to the hub.
-
-**Rewards:**
+- **Actions (10):** Hold, Return to Hub, Deliver to one of 6 centres, Recharge, Load Package. An action mask rules out commands the drone cannot carry out.
+- **Observation (38 values in [−1, 1]):** location, battery, cargo, time, wind, each centre's request, emergency flag and time left, and the battery needed to reach each site and get back.
+- **Start:** at the hub with 70–100% battery, no cargo, up to 2 open requests and a random wind.
+- **End:** the shift reaches 480 minutes, or the drone crashes.
 
 | Event | Reward |
 |---|---|
-| Emergency delivered before its 45-minute deadline | +10 |
-| Routine delivery before its 120-minute deadline | +4 |
-| Emergency deadline missed | −10 |
-| Routine deadline missed | −3 |
-| Trip to a centre with no open request | −1 |
+| Emergency delivered within 45 min | +10 |
+| Routine delivered within 120 min | +4 |
+| Emergency missed | −10 |
+| Routine missed | −3 |
+| Trip to a centre with no request | −1 |
 | Shift ends away from the hub | −15 |
-| Battery runs out in flight (crash) | −40, plus the requests the grounded service will miss |
+| Crash (battery runs out in flight) | −40, plus the requests it will now miss |
 
-**Start state:** the drone at the hub with 70–100% battery, no cargo, up to 2 open requests and a random wind.
-**Terminal conditions:** the shift reaches 480 minutes, or the drone crashes.
+**Visualisation:** `environment/rendering.py` streams each step to a three.js scene in `environment/web/`: satellite imagery over real elevation, the hub and health centres, and a fixed-wing drone that launches, drops packages by parachute and lands on a recovery wire. The map and 3D models are baked into the repo by `scripts/`, so the viewer runs offline.
 
-**Visualisation:** `environment/rendering.py` serves a three.js scene (`environment/web/`) updated over Server-Sent Events as the agent acts: real Sentinel-2 imagery of Muhanga draped over SRTM elevation at true scale (31 m terrain near the camera, with Lake Kivu drawn to its real shores), with the hub (catapult launcher, recovery wire, charging dock, hangar, solar array), a walled compound and marked drop zone at each health centre, and houses and trees streamed in around what the camera looks at: the real building footprints from OpenStreetMap where it maps them, elsewhere houses placed where the imagery shows roofs, each on a plinth where the ground slopes. The 3.3 m fixed-wing drone flies the flight plans in `environment/web/flight.js`: launch, a 10° climb to about 120 m above the ground, banked turns at a 220 m radius, terrain-following cruise, the drop pass and the landing, with take-off, drops and landings at 2.5× real time and the cruise as a time-lapse (up to about 40×); the panel shows the current factor under the clock. The package falls under a paper parachute with gravity, drag and wind; the hook pulls the arresting wire into a V and the drone swings on it, and trees sway in the wind. The map is baked into `environment/web/map/` by `scripts/bake_map.py` and the buildings and woodland by `scripts/bake_buildings.py`, so the viewer runs offline. The drone, the hub, the health centres, four house types and four tree species are modelled in Blender by `scripts/blender/build_assets.py` (`blender -b --factory-startup -P scripts/blender/build_assets.py`) and load from `environment/web/models/*.glb`; their textures are generated by the script and tile at real size. Imagery: Sentinel-2 cloudless 2025 by EOX (contains modified Copernicus Sentinel data), CC BY-NC-SA 4.0; elevation: SRTM via AWS Terrain Tiles; buildings and woodland: © OpenStreetMap contributors, ODbL.
+Imagery: Sentinel-2 cloudless 2025 by EOX (modified Copernicus Sentinel data), CC BY-NC-SA 4.0. Elevation: SRTM via AWS Terrain Tiles. Buildings: © OpenStreetMap contributors, ODbL.
 
 ## Training
 
 | File | Algorithms |
 |---|---|
-| `training/dqn_training.py` | DQN (`DQNLoss`, replay buffer, target network, epsilon-greedy) |
-| `training/pg_training.py` | REINFORCE (`ReinforceLoss`), PPO (`ClipPPOLoss` + GAE), A2C (`A2CLoss` + GAE) |
+| `training/dqn_training.py` | DQN (`DQNLoss`) |
+| `training/pg_training.py` | REINFORCE (`ReinforceLoss`), PPO (`ClipPPOLoss`), A2C (`A2CLoss`) |
 
-Each algorithm has 10 hyperparameter configurations, trained for 600,000 steps each on the same environment. Every run is scored on 20 validation seeds that training never uses, and the best run of each algorithm is picked on that score. Because picking the winner on those seeds flatters it, the four best runs are then compared once on 200 separate test seeds that were used for nothing else (`TEST_SEEDS` in `training/common.py`).
+Each algorithm has 10 hyperparameter runs of 600,000 steps. The best run of each is picked on 20 validation seeds, then the four best are compared on 200 test seeds used for nothing else.
 
 ```bash
 uv run python -m training.dqn_training --sweep --jobs 2
 uv run python -m training.pg_training --algo ppo --sweep --jobs 2    # also: reinforce, a2c
-uv run python -m training.analyze                                    # test evaluation, plots and tables
+uv run python -m training.analyze                                    # test evaluation, plots, tables
 ```
 
-Or run the same sweeps on Google Colab: [open `training/colab.ipynb` in Colab](https://colab.research.google.com/github/supserrr/reinforcement-learning/blob/main/training/colab.ipynb). It clones this repository from GitHub (push first), installs the pinned versions, trains any subset of algorithms and configurations, draws the plots and downloads `models/`, `logs/` and `assets/` as a zip to unzip over your local copy. A CPU runtime is enough; the full 40 runs take about 2–2.5 hours on Colab's 2 free cores.
+The same sweeps run on Google Colab with [`training/colab.ipynb`](https://colab.research.google.com/github/supserrr/reinforcement-learning/blob/main/training/colab.ipynb) (about 2–2.5 hours on a CPU runtime).
 
 ## Results
 
-| Agent | Validation (20 shifts) | Test, normal day (200 shifts) | Test, busy day | Test, windy day |
+Mean return per shift; test scores are over 200 shifts, ± standard error.
+
+| Agent | Validation | Test: normal day | Busy day | Windy day |
 |---|---|---|---|---|
 | DQN | +37.4 | +31.6 ± 1.5 | +19.3 | +31.6 |
 | PPO | +43.0 | +31.5 ± 1.8 | +12.6 | +30.6 |
@@ -76,7 +72,7 @@ Or run the same sweeps on Google Colab: [open `training/colab.ipynb` in Colab](h
 | REINFORCE | +5.1 | +1.9 ± 1.9 | −9.2 | +2.3 |
 | Hand-written dispatcher | +11.8 | +9.4 ± 1.7 | −11.6 | +8.8 |
 
-Test returns are means with their standard error. DQN and PPO tie on normal and windy days; DQN is ahead on busy days (by 6.7 ± 2.8 per shift on the same shifts). The validation scores are higher than the test scores because each best run was picked on them. The full test comparison, with crash rates and paired differences, is in `assets/tables/headline.md`. All 40 runs, with their hyperparameters and validation results, are in `logs/<algo>/sweep_summary.csv`; the plots are in `assets/plots/`.
+DQN and PPO tie on normal and windy days; DQN is ahead on busy days. Validation scores are higher because the best runs were picked on them. More detail: `assets/tables/headline.md` (test comparison), `logs/<algo>/sweep_summary.csv` (all 40 runs) and `assets/plots/`.
 
 ## Structure
 
@@ -90,19 +86,15 @@ Test returns are means with their standard error. DQN and PPO tie on normal and 
 │   ├── __init__.py
 │   ├── custom_env.py
 │   ├── rendering.py
-│   └── web/                 three.js visualisation; map/ holds the baked imagery and elevation, models/ the Blender models
-├── scripts/
-│   ├── blender/             builds the viewer's 3D models in Blender (build_assets.py, kit.py)
-│   ├── bake_map.py          downloads and bakes the viewer's map
-│   ├── bake_buildings.py    bakes OpenStreetMap buildings and woodland for the viewer
-│   └── bake_routes.py       site elevations and route climbs for the environment
+│   └── web/              three.js viewer, baked map and 3D models
+├── scripts/              bakes the map, buildings, route climbs and Blender models
 ├── training/
 │   ├── __init__.py
 │   ├── dqn_training.py
 │   ├── pg_training.py
-│   ├── common.py            shared environment, evaluation and logging code
-│   ├── analyze.py           plots and tables
-│   └── colab.ipynb          the same training on Google Colab
+│   ├── common.py         shared environment, evaluation and logging
+│   ├── analyze.py        test evaluation, plots and tables
+│   └── colab.ipynb
 ├── models/
 │   ├── dqn/
 │   └── pg/
