@@ -1,8 +1,8 @@
 # A2C sweep (10 runs, 600k steps each, same environment and training seed)
 
-Dispatcher level = +11.8. Returns are means over 20 unseen seeds.
+Dispatcher level = +11.8. Returns are means over 20 validation seeds that no run trained on. The best run (bold) is picked on these scores, which flatters it, so the final comparison in headline.md uses 200 separate test seeds.
 
-| Run | Change from baseline | lr | gamma | lmbda | entropy_coef | critic_coef | frames_per_batch | optimizer | hidden | Return (unseen) | Busy | Windy | Service | Steps to dispatcher level |
+| Run | Change from baseline | lr | gamma | lmbda | entropy_coef | critic_coef | frames_per_batch | optimizer | hidden | Return (validation) | Busy | Windy | Service | Steps to dispatcher level |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | run00 | baseline | 0.0007 | 0.99 | 0.95 | 0.01 | 0.5 | 256 | adam | 128 | -83.4 ± 18.5 | -118.4 | -83.4 | 0% | never |
 | run01 | lower learning rate | 0.0002 | 0.99 | 0.95 | 0.01 | 0.5 | 256 | adam | 128 | -3.2 ± 33.1 | -57.8 | -0.7 | 47% | 495k |

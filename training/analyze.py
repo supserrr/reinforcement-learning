@@ -1,13 +1,22 @@
 """Turn the sweep logs into the report's figures and tables.
 
-    uv run python -m training.analyze
+    uv run python -m training.analyze             # reuses logs/test_results.json if still current
+    uv run python -m training.analyze --retest    # re-run the test evaluation
 
-Writes assets/plots/*.png, assets/tables/*.md and logs/baselines.json.
+Writes assets/plots/*.png, assets/tables/*.md, logs/baselines.json and
+logs/test_results.json.
+
+The best run of each algorithm is picked on the 20 validation seeds, so its
+validation score flatters it. The final comparison (headline.md and
+generalisation.png) therefore uses 200 test seeds that neither training nor
+run selection ever saw.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
+import re
 from pathlib import Path
 
 import matplotlib
@@ -18,7 +27,8 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from environment import DroneDeliveryEnv, heuristic_action  # noqa: E402
-from training.common import EVAL_CONFIGS, EVAL_SEEDS, LOGS, ROOT  # noqa: E402
+from training.common import (EVAL_CONFIGS, EVAL_SEEDS, LOGS, ROOT, TEST_SEEDS,  # noqa: E402
+                             best_model_dir, greedy_action, load_best_net)
 
 PLOTS = ROOT / "assets" / "plots"
 TABLES = ROOT / "assets" / "tables"
@@ -57,32 +67,71 @@ def best_run(runs: dict) -> str:
     return max(runs, key=lambda r: runs[r]["summary"]["eval"]["default"]["return_mean"])
 
 
+def rollout(policy, seeds, config: str) -> dict:
+    """Play one shift per seed with policy(env, obs) -> action and summarise."""
+    rets, stats = [], []
+    for s in seeds:
+        env = DroneDeliveryEnv(config)
+        obs, _ = env.reset(seed=s)
+        done = False
+        while not done:
+            obs, _, te, tr, _ = env.step(policy(env, obs))
+            done = te or tr
+        rets.append(env.total_reward)
+        stats.append(env.stats.as_dict())
+    out = {"return_mean": float(np.mean(rets)), "return_std": float(np.std(rets)),
+           "return_sem": float(np.std(rets) / np.sqrt(len(rets)))}
+    for k in ("service_rate", "crashed", "delivered_emergency", "missed_emergency", "mean_emergency_wait"):
+        out[k] = float(np.mean([st[k] for st in stats]))
+    out["returns"] = [round(float(r), 2) for r in rets]
+    return out
+
+
+def baseline_policies() -> dict:
+    rng = np.random.default_rng(0)
+    return {"heuristic": lambda e, o: heuristic_action(e),
+            "random": lambda e, o: int(rng.choice(np.flatnonzero(o["action_mask"]))),
+            "hold": lambda e, o: 0}
+
+
 def baselines() -> dict:
+    """Non-learning baselines on the validation seeds (the level the sweep
+    tables and learning curves compare against)."""
     path = LOGS / "baselines.json"
     if path.exists():
         return json.loads(path.read_text())
-    out = {}
-    rng = np.random.default_rng(0)
-    for name, pol in {"heuristic": lambda e, o: heuristic_action(e),
-                      "random": lambda e, o: int(rng.choice(np.flatnonzero(o["action_mask"]))),
-                      "hold": lambda e, o: 0}.items():
-        out[name] = {}
-        for cfg in EVAL_CONFIGS:
-            rets, served, crashed = [], [], []
-            for s in EVAL_SEEDS:
-                env = DroneDeliveryEnv(cfg)
-                obs, _ = env.reset(seed=s)
-                done = False
-                while not done:
-                    obs, _, te, tr, _ = env.step(pol(env, obs))
-                    done = te or tr
-                rets.append(env.total_reward)
-                st = env.stats.as_dict()
-                served.append(st["service_rate"])
-                crashed.append(st["crashed"])
-            out[name][cfg] = {"return_mean": float(np.mean(rets)), "return_std": float(np.std(rets)),
-                              "service_rate": float(np.mean(served)), "crashed": float(np.mean(crashed))}
+    keep = ("return_mean", "return_std", "service_rate", "crashed")
+    out = {name: {cfg: {k: v for k, v in rollout(pol, EVAL_SEEDS, cfg).items() if k in keep}
+                  for cfg in EVAL_CONFIGS}
+           for name, pol in baseline_policies().items()}
     path.write_text(json.dumps(out, indent=2))
+    return out
+
+
+def test_results(retest: bool = False) -> dict:
+    """The final comparison: the best run of each algorithm (picked on the
+    validation seeds) and the baselines, each played on the same 200 test
+    seeds in every condition. Cached in logs/test_results.json and recomputed
+    when a best model changes."""
+    path = LOGS / "test_results.json"
+    picked = {a: (best_model_dir(a) / "source_run.txt").read_text().strip()
+              for a in ALGOS if (best_model_dir(a) / "model.pt").exists()}
+    if path.exists() and not retest:
+        cached = json.loads(path.read_text())
+        if cached.get("best_runs") == picked and cached.get("seeds") == [TEST_SEEDS[0], TEST_SEEDS[-1]]:
+            return cached
+    policies = {}
+    for a in picked:
+        net = load_best_net(a)
+        policies[a] = lambda e, o, net=net: greedy_action(net, o)
+    policies.update(baseline_policies())
+    results = {name: {cfg: rollout(pol, TEST_SEEDS, cfg) for cfg in EVAL_CONFIGS}
+               for name, pol in policies.items()}
+    out = {"seeds": [TEST_SEEDS[0], TEST_SEEDS[-1]], "best_runs": picked, "results": results}
+    text = json.dumps(out, indent=2)
+    # one line per list of per-shift returns
+    text = re.sub(r"\[\s+([-\d.,\s]+?)\s+\]", lambda m: "[" + " ".join(m.group(1).split()) + "]", text)
+    path.write_text(text + "\n")
     return out
 
 
@@ -234,27 +283,27 @@ def fig_convergence(data, base):
     return rows
 
 
-def fig_generalisation(data, base):
+def fig_generalisation(test):
     fig, ax = plt.subplots(figsize=(10, 4))
     groups = list(EVAL_CONFIGS)
     labels = {"default": "Normal day\n(training conditions)", "busy": "Busy day\n(+50% requests)",
               "windy": "Windy day\n(+60% wind)"}
-    series = [(NAME[a], COLOR[a], lambda c, a=a: data[a][best_run(data[a])]["summary"]["eval"][c])
-              for a in ALGOS if data[a]]
-    series.append(("Hand-written dispatcher", "#8a8984", lambda c: base["heuristic"][c]))
+    res = test["results"]
+    series = [(NAME[a], COLOR[a], a) for a in ALGOS if a in res]
+    series.append(("Hand-written dispatcher", "#8a8984", "heuristic"))
     n = len(series)
     w = 0.8 / n
-    for j, (name, color, get) in enumerate(series):
+    for j, (name, color, key) in enumerate(series):
         xs = np.arange(len(groups)) + (j - (n - 1) / 2) * w
-        ys = [get(c)["return_mean"] for c in groups]
-        err = [get(c)["return_std"] / np.sqrt(len(EVAL_SEEDS)) for c in groups]
+        ys = [res[key][c]["return_mean"] for c in groups]
+        err = [res[key][c]["return_sem"] for c in groups]
         ax.bar(xs, ys, width=w - 0.02, color=color, label=name, edgecolor="white", linewidth=1)
         ax.errorbar(xs, ys, yerr=err, fmt="none", ecolor=INK2, elinewidth=1, capsize=2)
     ax.axhline(0, color=MUTED, lw=1)
     ax.set_xticks(range(len(groups)), [labels[g] for g in groups])
-    ax.set_ylabel("mean shift return (20 unseen seeds)")
+    ax.set_ylabel(f"mean shift return ({len(TEST_SEEDS)} test seeds)\nerror bars: ± 1 standard error")
     ax.legend(ncols=n, loc="upper center", bbox_to_anchor=(0.5, 1.13), fontsize=8.5)
-    ax.set_title("Generalisation: best run of each method on seeds and conditions never trained on",
+    ax.set_title("Generalisation: best run of each method on test shifts never used for training or selection",
                  loc="left", pad=28)
     ax.grid(axis="x", visible=False)
     fig.savefig(PLOTS / "generalisation.png")
@@ -270,7 +319,7 @@ RF_COLS = ["lr", "gamma", "baseline", "normalize", "episodes_per_update", "entro
 COLS = {"dqn": DQN_COLS, "ppo": PPO_COLS, "a2c": A2C_COLS, "reinforce": RF_COLS}
 
 
-def tables(data, base, conv_rows):
+def tables(data, base, conv_rows, test):
     TABLES.mkdir(parents=True, exist_ok=True)
     conv = {(a, r): f for a, r, f in conv_rows}
     level = base["heuristic"]["default"]["return_mean"]
@@ -279,7 +328,7 @@ def tables(data, base, conv_rows):
         if not runs:
             continue
         b = best_run(runs)
-        head = ["Run", "Change from baseline", *COLS[algo], "Return (unseen)", "Busy", "Windy",
+        head = ["Run", "Change from baseline", *COLS[algo], "Return (validation)", "Busy", "Windy",
                 "Service", "Steps to dispatcher level"]
         lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
         for r, d in runs.items():
@@ -293,50 +342,94 @@ def tables(data, base, conv_rows):
             lines.append("| " + " | ".join(cells) + " |")
         (TABLES / f"{algo}_sweep.md").write_text(
             f"# {NAME[algo]} sweep (10 runs, 600k steps each, same environment and training seed)\n\n"
-            f"Dispatcher level = {level:+.1f}. Returns are means over 20 unseen seeds.\n\n" + "\n".join(lines) + "\n")
+            f"Dispatcher level = {level:+.1f}. Returns are means over 20 validation seeds that no run trained on. "
+            "The best run (bold) is picked on these scores, which flatters it, so the final comparison in "
+            f"headline.md uses {len(TEST_SEEDS)} separate test seeds.\n\n" + "\n".join(lines) + "\n")
+    headline(data, base, test)
 
-    head = ["Method", "Best run", "Normal day", "Busy day", "Windy day", "Service rate", "Crash rate",
-            "Emergencies delivered", "Emergencies missed", "Mean emergency wait (min)"]
+
+def headline(data, base, test):
+    """Final comparison on the test seeds, plus paired differences (every
+    method plays the same test shifts, so their returns can be compared shift
+    by shift)."""
+    res, n = test["results"], len(TEST_SEEDS)
+    head = ["Method", "Best run (picked on validation)", "Validation return", "Test: normal day", "Busy day",
+            "Windy day", "Service rate", "Crash rate (normal / busy)", "Emergencies delivered", "Emergencies missed",
+            "Mean emergency wait (min)"]
     lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
-    for algo in ALGOS:
-        if not data[algo]:
-            continue
-        b = best_run(data[algo])
-        ev = data[algo][b]["summary"]["eval"]
-        d = ev["default"]
+    rows = [(NAME[a], a) for a in ALGOS if a in res and data[a]]
+    rows += [("Hand-written dispatcher", "heuristic"), ("Always hold", "hold"), ("Random (masked)", "random")]
+    for name, key in rows:
+        r = res[key]
+        d = r["default"]
+        if key in ALGOS:
+            b = best_run(data[key])
+            picked = f"{b} ({data[key][b]['summary']['hparams'].get('note', '')})"
+            val = f"{data[key][b]['summary']['eval']['default']['return_mean']:+.1f}"
+            emerg = [f"{d['delivered_emergency']:.1f}", f"{d['missed_emergency']:.1f}",
+                     f"{d['mean_emergency_wait']:.1f}"]
+        else:
+            picked, val = "n/a", f"{base[key]['default']['return_mean']:+.1f}"
+            emerg = ["", "", ""]
         lines.append("| " + " | ".join([
-            NAME[algo], f"{b} ({data[algo][b]['summary']['hparams'].get('note', '')})",
-            f"{d['return_mean']:+.1f} ± {d['return_std']:.1f}", f"{ev['busy']['return_mean']:+.1f}",
-            f"{ev['windy']['return_mean']:+.1f}", f"{d['service_rate']:.0%}", f"{d['crashed']:.0%}",
-            f"{d['delivered_emergency']:.1f}", f"{d['missed_emergency']:.1f}",
-            f"{d['mean_emergency_wait']:.1f}"]) + " |")
-    for name, key in (("Hand-written dispatcher", "heuristic"), ("Always hold", "hold"), ("Random (masked)", "random")):
-        bb = base[key]
-        lines.append(f"| {name} | n/a | {bb['default']['return_mean']:+.1f} ± {bb['default']['return_std']:.1f} | "
-                     f"{bb['busy']['return_mean']:+.1f} | {bb['windy']['return_mean']:+.1f} | "
-                     f"{bb['default']['service_rate']:.0%} | {bb['default']['crashed']:.0%} | | | |")
-    (TABLES / "headline.md").write_text("# Best run of each method vs baselines (20 unseen seeds per condition)\n\n"
-                                        + "\n".join(lines) + "\n")
+            name, picked, val, f"{d['return_mean']:+.1f} ± {d['return_std']:.1f}",
+            f"{r['busy']['return_mean']:+.1f}", f"{r['windy']['return_mean']:+.1f}", f"{d['service_rate']:.0%}",
+            f"{d['crashed']:.0%} / {r['busy']['crashed']:.0%}", *emerg]) + " |")
+
+    learned = [a for a in ALGOS if a in res]
+    lead = max(learned, key=lambda a: res[a]["default"]["return_mean"])
+    phead = ["Method", *(f"{c.capitalize() if c != 'default' else 'Normal'} day" for c in EVAL_CONFIGS)]
+    plines = ["| " + " | ".join(phead) + " |", "|" + "---|" * len(phead)]
+    for key in [a for a in learned if a != lead] + ["heuristic"]:
+        cells = []
+        for c in EVAL_CONFIGS:
+            diff = np.array(res[key][c]["returns"]) - np.array(res[lead][c]["returns"])
+            cells.append(f"{diff.mean():+.1f} ± {diff.std() / np.sqrt(n):.1f} ({np.mean(diff > 0):.0%})")
+        plines.append(f"| {NAME.get(key, 'Hand-written dispatcher')} | " + " | ".join(cells) + " |")
+
+    (TABLES / "headline.md").write_text(
+        f"# Final comparison on {n} test shifts\n\n"
+        f"Each algorithm's best run was picked on 20 validation seeds (see the sweep tables). These are {n} "
+        f"different seeds ({TEST_SEEDS[0]}–{TEST_SEEDS[-1]}) that neither training nor run selection used, "
+        "and every method plays the same shifts. Test returns are mean ± standard deviation over the shifts "
+        f"(the standard error of a mean is about a {np.sqrt(n):.0f}th of that). \"Validation return\" is the "
+        "normal-day score the run was picked on.\n\n"
+        + "\n".join(lines)
+        + f"\n\n## Paired differences from {NAME[lead]}\n\n"
+        f"{NAME[lead]} scored highest on normal test days. Each cell is the method's return minus "
+        f"{NAME[lead]}'s on the same shift: mean ± standard error, and the share of shifts where the method "
+        "scored higher. A difference within about two standard errors of zero is not a real gap.\n\n"
+        + "\n".join(plines) + "\n")
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--retest", action="store_true", help="re-run the test evaluation even if it is cached")
+    args = ap.parse_args()
     PLOTS.mkdir(parents=True, exist_ok=True)
     data = {a: load(a) for a in ALGOS}
     base = baselines()
+    test = test_results(args.retest)
     fig_reward_curves(data, base)
     fig_sweeps(data, base)
     fig_dqn_objective(data)
     fig_pg_entropy(data)
     conv = fig_convergence(data, base)
-    fig_generalisation(data, base)
-    tables(data, base, conv)
+    fig_generalisation(test)
+    tables(data, base, conv, test)
+    res = test["results"]
+    print(f"{'':>23}validation  test ({len(TEST_SEEDS)} shifts)")
     for a in ALGOS:
-        if data[a]:
+        if data[a] and a in res:
             b = best_run(data[a])
-            print(f"{NAME[a]:>10}: {len(data[a])} runs, best {b} "
-                  f"{data[a][b]['summary']['eval']['default']['return_mean']:+.1f}")
-    print(f"dispatcher {base['heuristic']['default']['return_mean']:+.1f}  random {base['random']['default']['return_mean']:+.1f}")
-    print(f"wrote {PLOTS} and {TABLES}")
+            t = res[a]["default"]
+            print(f"{NAME[a]:>10} ({len(data[a])} runs, best {b}) "
+                  f"{data[a][b]['summary']['eval']['default']['return_mean']:+6.1f}   "
+                  f"{t['return_mean']:+6.1f} ± {t['return_sem']:.1f}")
+    h = res["heuristic"]["default"]
+    print(f"{'dispatcher':>23} {base['heuristic']['default']['return_mean']:+6.1f}   "
+          f"{h['return_mean']:+6.1f} ± {h['return_sem']:.1f}")
+    print(f"wrote {PLOTS}, {TABLES} and {LOGS / 'test_results.json'}")
 
 
 if __name__ == "__main__":

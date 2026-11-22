@@ -1,8 +1,8 @@
 # PPO sweep (10 runs, 600k steps each, same environment and training seed)
 
-Dispatcher level = +11.8. Returns are means over 20 unseen seeds.
+Dispatcher level = +11.8. Returns are means over 20 validation seeds that no run trained on. The best run (bold) is picked on these scores, which flatters it, so the final comparison in headline.md uses 200 separate test seeds.
 
-| Run | Change from baseline | lr | gamma | lmbda | clip_epsilon | entropy_coef | frames_per_batch | epochs | minibatch | Return (unseen) | Busy | Windy | Service | Steps to dispatcher level |
+| Run | Change from baseline | lr | gamma | lmbda | clip_epsilon | entropy_coef | frames_per_batch | epochs | minibatch | Return (validation) | Busy | Windy | Service | Steps to dispatcher level |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | run00 | baseline | 0.0003 | 0.99 | 0.95 | 0.2 | 0.01 | 2048 | 4 | 256 | +20.9 ± 37.3 | +16.3 | +23.7 | 56% | 236k |
 | run01 | lower learning rate | 0.0001 | 0.99 | 0.95 | 0.2 | 0.01 | 2048 | 4 | 256 | +18.6 ± 12.7 | -5.5 | +17.1 | 52% | 371k |

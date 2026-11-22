@@ -1,8 +1,8 @@
 # REINFORCE sweep (10 runs, 600k steps each, same environment and training seed)
 
-Dispatcher level = +11.8. Returns are means over 20 unseen seeds.
+Dispatcher level = +11.8. Returns are means over 20 validation seeds that no run trained on. The best run (bold) is picked on these scores, which flatters it, so the final comparison in headline.md uses 200 separate test seeds.
 
-| Run | Change from baseline | lr | gamma | baseline | normalize | episodes_per_update | entropy_coef | Return (unseen) | Busy | Windy | Service | Steps to dispatcher level |
+| Run | Change from baseline | lr | gamma | baseline | normalize | episodes_per_update | entropy_coef | Return (validation) | Busy | Windy | Service | Steps to dispatcher level |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | run00 | baseline (value baseline, normalised returns) | 0.0003 | 0.99 | value | True | 8 | 0.02 | -85.2 ± 17.1 | -115.9 | -85.2 | 0% | never |
 | run01 | lower learning rate | 0.0001 | 0.99 | value | True | 8 | 0.02 | -87.0 ± 16.3 | -116.2 | -87.0 | 0% | never |

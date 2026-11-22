@@ -1,8 +1,8 @@
 # DQN sweep (10 runs, 600k steps each, same environment and training seed)
 
-Dispatcher level = +11.8. Returns are means over 20 unseen seeds.
+Dispatcher level = +11.8. Returns are means over 20 validation seeds that no run trained on. The best run (bold) is picked on these scores, which flatters it, so the final comparison in headline.md uses 200 separate test seeds.
 
-| Run | Change from baseline | lr | gamma | buffer_size | batch_size | eps_end | eps_frames | target_update | target_interval | double_dqn | loss | hidden | Return (unseen) | Busy | Windy | Service | Steps to dispatcher level |
+| Run | Change from baseline | lr | gamma | buffer_size | batch_size | eps_end | eps_frames | target_update | target_interval | double_dqn | loss | hidden | Return (validation) | Busy | Windy | Service | Steps to dispatcher level |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | run00 | baseline | 0.0005 | 0.99 | 50000 | 128 | 0.05 | 60000 | hard | 500 | False | l2 | 128 | +18.8 ± 20.1 | +14.6 | +17.9 | 54% | 115k |
 | run01 | lower learning rate | 0.0001 | 0.99 | 50000 | 128 | 0.05 | 60000 | hard | 500 | False | l2 | 128 | +27.4 ± 25.1 | +16.4 | +28.7 | 58% | 190k |

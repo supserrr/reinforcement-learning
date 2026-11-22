@@ -11,7 +11,7 @@ uv sync
 uv run main.py
 ```
 
-`main.py` loads the best trained agent (PPO), opens the three.js visualisation in the browser and prints every decision in the terminal. `uv run play.py` does the same.
+`main.py` loads the agent with the best validation score (PPO; on the test shifts it ties with DQN), opens the three.js visualisation in the browser and prints every decision in the terminal. `uv run play.py` does the same.
 
 In the viewer, **Follow** (or `F`) flies the camera down behind the drone for a third-person view over the hills, and cuts to ground cameras for each catapult launch, parachute drop and wire landing; drag to look around (or leave a ground shot), scroll or use the zoom buttons to move closer, and press `F` again to climb back to the map. The speed buttons (or `[` and `]`) set the playback pace from ½× to 4×; the agent waits for the page to finish each step, so the terminal log stays in step with the animation.
 
@@ -56,27 +56,27 @@ In the viewer, **Follow** (or `F`) flies the camera down behind the drone for a 
 | `training/dqn_training.py` | DQN (`DQNLoss`, replay buffer, target network, epsilon-greedy) |
 | `training/pg_training.py` | REINFORCE (`ReinforceLoss`), PPO (`ClipPPOLoss` + GAE), A2C (`A2CLoss` + GAE) |
 
-Each algorithm has 10 hyperparameter configurations, trained for 600,000 steps each on the same environment and evaluated on 20 seeds not used in training.
+Each algorithm has 10 hyperparameter configurations, trained for 600,000 steps each on the same environment. Every run is scored on 20 validation seeds that training never uses, and the best run of each algorithm is picked on that score. Because picking the winner on those seeds flatters it, the four best runs are then compared once on 200 separate test seeds that were used for nothing else (`TEST_SEEDS` in `training/common.py`).
 
 ```bash
 uv run python -m training.dqn_training --sweep --jobs 2
 uv run python -m training.pg_training --algo ppo --sweep --jobs 2    # also: reinforce, a2c
-uv run python -m training.analyze                                    # plots in assets/plots
+uv run python -m training.analyze                                    # test evaluation, plots and tables
 ```
 
 Or run the same sweeps on Google Colab: [open `training/colab.ipynb` in Colab](https://colab.research.google.com/github/supserrr/reinforcement-learning/blob/main/training/colab.ipynb). It clones this repository from GitHub (push first), installs the pinned versions, trains any subset of algorithms and configurations, draws the plots and downloads `models/`, `logs/` and `assets/` as a zip to unzip over your local copy. A CPU runtime is enough; the full 40 runs take about 2–2.5 hours on Colab's 2 free cores.
 
 ## Results
 
-| Agent | Mean return (20 unseen shifts) |
-|---|---|
-| PPO | +43.0 |
-| DQN | +37.4 |
-| A2C | +29.1 |
-| REINFORCE | +5.1 |
-| Hand-written dispatcher | +11.8 |
+| Agent | Validation (20 shifts) | Test, normal day (200 shifts) | Test, busy day | Test, windy day |
+|---|---|---|---|---|
+| DQN | +37.4 | +31.6 ± 1.5 | +19.3 | +31.6 |
+| PPO | +43.0 | +31.5 ± 1.8 | +12.6 | +30.6 |
+| A2C | +29.1 | +23.0 ± 1.3 | +6.4 | +23.3 |
+| REINFORCE | +5.1 | +1.9 ± 1.9 | −9.2 | +2.3 |
+| Hand-written dispatcher | +11.8 | +9.4 ± 1.7 | −11.6 | +8.8 |
 
-All 40 runs, with their hyperparameters and results, are in `logs/<algo>/sweep_summary.csv`; the plots are in `assets/plots/`.
+Test returns are means with their standard error. DQN and PPO tie on normal and windy days; DQN is ahead on busy days (by 6.7 ± 2.8 per shift on the same shifts). The validation scores are higher than the test scores because each best run was picked on them. The full test comparison, with crash rates and paired differences, is in `assets/tables/headline.md`. All 40 runs, with their hyperparameters and validation results, are in `logs/<algo>/sweep_summary.csv`; the plots are in `assets/plots/`.
 
 ## Structure
 

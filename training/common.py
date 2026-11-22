@@ -21,9 +21,15 @@ ROOT = Path(__file__).resolve().parent.parent
 LOGS = ROOT / "logs"
 MODELS = ROOT / "models"
 
-# Held-out seeds: training uses seeds below 10_000, evaluation never does.
+# Held-out seeds: training uses seeds below 10_000 and never sees these.
+# Validation: every run is scored on these, and the best run of each sweep is
+# picked by its score here, so these scores flatter the winner a little.
 EVAL_SEEDS = list(range(10_000, 10_020))
+# Checked every 5,000 steps during training for the learning curves.
 QUICK_EVAL_SEEDS = list(range(20_000, 20_005))
+# Test: used only once, after the best runs are picked, for the final comparison
+# (training/analyze.py). Nothing is chosen or tuned on them.
+TEST_SEEDS = list(range(30_000, 30_200))
 EVAL_CONFIGS = ("default", "busy", "windy")
 
 
@@ -65,6 +71,23 @@ def greedy_action(net: nn.Module, obs: dict) -> int:
     scores = net(torch.as_tensor(obs["observation"]).unsqueeze(0)).squeeze(0)
     mask = torch.as_tensor(obs["action_mask"], dtype=torch.bool)
     return int(torch.where(mask, scores, torch.finfo(scores.dtype).min).argmax().item())
+
+
+def best_model_dir(algo: str) -> Path:
+    return MODELS / ("dqn" if algo == "dqn" else "pg") / f"{algo}_best"
+
+
+def load_best_net(algo: str) -> nn.Module:
+    """The best sweep run of an algorithm (models/<dqn|pg>/<algo>_best) as a
+    network mapping observation -> action scores."""
+    from environment import N_ACTIONS, OBS_DIM
+
+    d = best_model_dir(algo)
+    hp = json.loads((d / "hparams.json").read_text())
+    net = mlp(OBS_DIM, N_ACTIONS, hp["hidden"], act=nn.ReLU if algo == "dqn" else nn.Tanh)
+    net.load_state_dict(torch.load(d / "model.pt", map_location="cpu"))
+    net.eval()
+    return net
 
 
 @torch.no_grad()

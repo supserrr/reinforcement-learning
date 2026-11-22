@@ -33,7 +33,7 @@ def best_dir(algo: str) -> Path:
 
 
 def best_algo() -> str:
-    """The algorithm whose best sweep run scored highest on unseen seeds."""
+    """The algorithm whose best sweep run scored highest on the validation seeds."""
     scores = {}
     for algo in ALGOS:
         table = ROOT / "logs" / algo / "sweep_summary.csv"
@@ -52,17 +52,10 @@ def load_policy(algo: str):
         rng = np.random.default_rng(0)
         return (lambda env, obs: int(rng.choice(np.flatnonzero(obs["action_mask"])))), LABELS[algo], NOTES[algo]
 
-    import torch
-    from torch import nn
-
-    from environment import N_ACTIONS, OBS_DIM
-    from training.common import greedy_action, mlp
+    from training.common import greedy_action, load_best_net
 
     d = best_dir(algo)
-    hp = json.loads((d / "hparams.json").read_text())
-    net = mlp(OBS_DIM, N_ACTIONS, hp["hidden"], act=nn.ReLU if algo == "dqn" else nn.Tanh)
-    net.load_state_dict(torch.load(d / "model.pt", map_location="cpu"))
-    net.eval()
+    net = load_best_net(algo)
     run = (d / "source_run.txt").read_text().split()[0] if (d / "source_run.txt").exists() else ""
     note = f"Best of 10 tuning runs ({run.replace('run', 'run ')})" if run else "Best tuning run"
     return (lambda env, obs: greedy_action(net, obs)), LABELS[algo], note
