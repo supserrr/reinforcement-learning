@@ -21,22 +21,22 @@
   },
   "random": {
     "default": {
-      "return_mean": -154.11404095735864,
-      "return_std": 11.316339600362676,
-      "service_rate": 0.16214285714285714,
-      "crashed": 1.0
+      "return_mean": -54.9,
+      "return_std": 20.159117044156474,
+      "service_rate": 0.23888804822628348,
+      "crashed": 0.0
     },
     "busy": {
-      "return_mean": -209.37676308649094,
-      "return_std": 16.050298368240423,
-      "service_rate": 0.19443181818181818,
-      "crashed": 1.0
+      "return_mean": -75.15,
+      "return_std": 31.917510867860607,
+      "service_rate": 0.21638753358634905,
+      "crashed": 0.0
     },
     "windy": {
-      "return_mean": -152.25435726328118,
-      "return_std": 14.619411211139035,
-      "service_rate": 0.2839880952380952,
-      "crashed": 1.0
+      "return_mean": -68.0,
+      "return_std": 23.019556902772912,
+      "service_rate": 0.19177996109497655,
+      "crashed": 0.0
     }
   },
   "hold": {

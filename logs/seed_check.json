@@ -1,89 +1,89 @@
 {
   "best_runs": {
-    "dqn": "run04",
-    "ppo": "run02",
-    "a2c": "run06",
+    "dqn": "run07",
+    "ppo": "run07",
+    "a2c": "run02",
     "reinforce": "run02"
   },
   "results": {
     "dqn": [
       {
-        "run": "run04",
+        "run": "run07",
         "seed": 0,
-        "validation": 38.0,
-        "test": 27.6600885114532
+        "validation": 48.9,
+        "test": 44.765
       },
       {
-        "run": "seed1_run04",
+        "run": "seed1_run07",
         "seed": 1,
-        "validation": 25.35,
-        "test": 22.773299802770385
+        "validation": 46.15,
+        "test": 44.46
       },
       {
-        "run": "seed2_run04",
+        "run": "seed2_run07",
         "seed": 2,
-        "validation": 25.55,
-        "test": 24.889208213019543
+        "validation": 49.15,
+        "test": 41.235
       }
     ],
     "ppo": [
       {
-        "run": "run02",
+        "run": "run07",
         "seed": 0,
-        "validation": 31.5,
-        "test": 25.019214302728642
+        "validation": 49.9,
+        "test": 35.705
       },
       {
-        "run": "seed1_run02",
+        "run": "seed1_run07",
         "seed": 1,
-        "validation": 6.75,
-        "test": 11.689470089620785
+        "validation": 39.55,
+        "test": 34.03
       },
       {
-        "run": "seed2_run02",
+        "run": "seed2_run07",
         "seed": 2,
-        "validation": 28.341054533970873,
-        "test": 19.518388728082517
+        "validation": 31.55,
+        "test": 31.705
       }
     ],
     "a2c": [
       {
-        "run": "run06",
+        "run": "run02",
         "seed": 0,
-        "validation": 38.4,
-        "test": 22.795418309426054
+        "validation": 42.05,
+        "test": 38.13
       },
       {
-        "run": "seed1_run06",
+        "run": "seed1_run02",
         "seed": 1,
-        "validation": 16.0,
-        "test": 11.692092866055056
+        "validation": 36.7,
+        "test": 34.055
       },
       {
-        "run": "seed2_run06",
+        "run": "seed2_run02",
         "seed": 2,
-        "validation": 13.091659986560055,
-        "test": 17.023140228092373
+        "validation": 37.9,
+        "test": 34.675
       }
     ],
     "reinforce": [
       {
         "run": "run02",
         "seed": 0,
-        "validation": -6.100432804163392,
-        "test": -12.02960357698823
+        "validation": 37.0,
+        "test": 37.17
       },
       {
         "run": "seed1_run02",
         "seed": 1,
-        "validation": 7.208083657561528,
-        "test": 3.496707582245272
+        "validation": 34.95,
+        "test": 32.775
       },
       {
         "run": "seed2_run02",
         "seed": 2,
-        "validation": -10.9,
-        "test": -7.691810757181793
+        "validation": 40.6,
+        "test": 36.465
       }
     ]
   }

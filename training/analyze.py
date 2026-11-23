@@ -82,7 +82,8 @@ def rollout(policy, seeds, config: str) -> dict:
         stats.append(env.stats.as_dict())
     out = {"return_mean": float(np.mean(rets)), "return_std": float(np.std(rets)),
            "return_sem": float(np.std(rets) / np.sqrt(len(rets)))}
-    for k in ("service_rate", "crashed", "delivered_emergency", "missed_emergency", "mean_emergency_wait"):
+    for k in ("service_rate", "crashed", "stranded", "delivered_emergency", "missed_emergency", "delivered_routine",
+              "missed_routine", "wasted_trips", "recharges", "mean_emergency_wait"):
         out[k] = float(np.mean([st[k] for st in stats]))
     out["returns"] = [round(float(r), 2) for r in rets]
     return out
@@ -415,7 +416,7 @@ def headline(data, base, test, seeds=None):
     by shift)."""
     res, n = test["results"], len(TEST_SEEDS)
     head = ["Method", "Best run (picked on validation)", "Validation return", "Test: normal day", "Busy day",
-            "Windy day", "Service rate", "Crash rate (normal / busy)", "Emergencies delivered", "Emergencies missed",
+            "Windy day", "Service rate", "Crash rate (normal / busy)", "Ends away or in the air", "Emergencies delivered", "Emergencies missed",
             "Mean emergency wait (min)"]
     lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
     rows = [(NAME[a], a) for a in ALGOS if a in res and data[a]]
@@ -435,7 +436,7 @@ def headline(data, base, test, seeds=None):
         lines.append("| " + " | ".join([
             name, picked, val, f"{d['return_mean']:+.1f} ± {d['return_std']:.1f}",
             f"{r['busy']['return_mean']:+.1f}", f"{r['windy']['return_mean']:+.1f}", f"{d['service_rate']:.0%}",
-            f"{d['crashed']:.0%} / {r['busy']['crashed']:.0%}", *emerg]) + " |")
+            f"{d['crashed']:.0%} / {r['busy']['crashed']:.0%}", f"{d.get('stranded', float('nan')):.0%}", *emerg]) + " |")
 
     learned = [a for a in ALGOS if a in res]
     lead = max(learned, key=lambda a: res[a]["default"]["return_mean"])

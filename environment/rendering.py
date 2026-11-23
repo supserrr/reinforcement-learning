@@ -9,7 +9,7 @@ exposes the integration points a real deployment would use:
     GET  /events      live stream of step messages (text/event-stream)
     POST /api/ack     {"episode": int, "step": int}: the page finished playing
                       that step, so the agent may take its next decision
-    POST /api/act     {"observation": [38 floats], "action_mask": [10 ints]}
+    POST /api/act     {"observation": [45 floats], "action_mask": [10 ints]}
                       -> {"action": int, "name": str} from the loaded policy
 
 Only the Python standard library is used on the server side.

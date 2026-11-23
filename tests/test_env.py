@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from environment import N_ACTIONS, OBS_DIM, DroneDeliveryEnv, heuristic_action
-from environment.custom_env import A_DELIVER_FIRST, A_HOLD, A_LOAD, A_RECHARGE, A_RETURN, HUB
+from environment.custom_env import A_DELIVER_FIRST, A_HOLD, A_LOAD, A_RECHARGE, A_RETURN, HUB, N_SITES, SLACK_SCALE_MIN
 
 
 def rollout(policy, seed, config="default"):
@@ -109,3 +109,65 @@ def test_heuristic_beats_random():
                     for s in range(20)])
     heur = np.mean([rollout(lambda e, o: heuristic_action(e), s)[0].total_reward for s in range(20)])
     assert heur > rand + 50
+
+
+def test_time_left_features_say_whether_a_trip_fits_in_the_shift():
+    env = DroneDeliveryEnv()
+    env.reset(seed=0)
+    k = OBS_DIM - N_SITES  # the last N_SITES values
+    o = env._features()
+    assert np.all(o[k:] == 1.0)  # 08:00: every trip fits with hours to spare
+    env.loc = 3
+    trip_home = env.flight_minutes(3, HUB)
+    env.t = 480.0 - trip_home - 10.0  # 10 minutes of slack if it flies home now
+    o = env._features()
+    assert o[k + HUB] == pytest.approx(10.0 / SLACK_SCALE_MIN, abs=1e-5)
+    assert o[k + 3] == pytest.approx(o[k + HUB])  # already at site 3: only the flight home is left
+    assert o[k + 1] < 0  # a trip to another centre and back can no longer finish
+
+
+def test_mask_only_launches_flights_that_get_home_in_time():
+    env = DroneDeliveryEnv()
+    env.reset(seed=0)
+    env.requests = [None] * 7
+    env.battery, env.cargo = 100.0, 1
+    out, back = env.flight_minutes(HUB, 4), env.flight_minutes(4, HUB)
+    env.t = 480.0 - out - back + 1.0  # reaches centre 4 in time but cannot get back
+    assert not env.action_mask()[A_DELIVER_FIRST + 3]
+    env.t = 480.0 - out - back - 1.0
+    assert env.action_mask()[A_DELIVER_FIRST + 3]
+
+
+def test_mask_keeps_enough_battery_for_the_flight_home():
+    env = DroneDeliveryEnv()
+    env.reset(seed=0)
+    env.cargo = 1
+    there_and_back = env.flight_energy(HUB, 4) + env.flight_energy(4, HUB)
+    env.battery = env.flight_energy(HUB, 4) + 1.0  # covers the way out only
+    assert not env.action_mask()[A_DELIVER_FIRST + 3]
+    env.battery = there_and_back + env.cfg.return_reserve + 0.1
+    assert env.action_mask()[A_DELIVER_FIRST + 3]
+
+
+def test_hold_over_a_centre_only_while_it_can_still_get_home():
+    env = DroneDeliveryEnv()
+    env.reset(seed=0)
+    env.loc, env.battery, env.cargo = 3, 100.0, 0
+    env.t = 480.0 - env.flight_minutes(3, HUB) - 2.0  # 5 more minutes would be too late
+    m = env.action_mask()
+    assert m[A_RETURN] and not m[A_HOLD]
+    env.t = 100.0
+    assert env.action_mask()[A_HOLD]
+
+
+def test_masked_policies_never_strand_or_crash():
+    rng = np.random.default_rng(1)
+    for s in range(30):
+        env, _ = rollout(lambda e, o: int(rng.choice(np.flatnonzero(o["action_mask"]))), seed=s)
+        assert not env.stats.stranded and not env.stats.crashed
+
+
+def test_ending_away_costs_more_than_a_last_emergency_is_worth():
+    c = DroneDeliveryEnv().cfg
+    # delivering a final emergency and ending away must be worse than missing it
+    assert c.r_emergency + c.r_stranded < c.r_emergency_missed

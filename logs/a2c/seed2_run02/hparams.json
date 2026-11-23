@@ -1,0 +1,14 @@
+{
+  "total_frames": 600000,
+  "lr": 0.002,
+  "gamma": 0.99,
+  "lmbda": 0.95,
+  "entropy_coef": 0.01,
+  "critic_coef": 0.5,
+  "frames_per_batch": 256,
+  "hidden": 128,
+  "max_grad_norm": 0.5,
+  "optimizer": "adam",
+  "seed": 2,
+  "note": "higher learning rate"
+}

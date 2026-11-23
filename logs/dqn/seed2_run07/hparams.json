@@ -1,0 +1,21 @@
+{
+  "total_frames": 600000,
+  "lr": 0.0005,
+  "gamma": 0.99,
+  "hidden": 128,
+  "buffer_size": 50000,
+  "batch_size": 128,
+  "frames_per_batch": 64,
+  "updates_per_batch": 4,
+  "learning_starts": 2000,
+  "eps_start": 1.0,
+  "eps_end": 0.01,
+  "eps_frames": 15000,
+  "target_update": "hard",
+  "target_interval": 500,
+  "tau": 0.005,
+  "double_dqn": false,
+  "loss": "l2",
+  "seed": 2,
+  "note": "fast exploration decay"
+}

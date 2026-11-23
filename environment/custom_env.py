@@ -93,7 +93,10 @@ ACTION_NAMES = (
     "Load Package",
 )
 
-OBS_DIM = N_SITES + 1 + 1 + 1 + 3 + 3 * N_CENTRES + N_SITES  # 38
+OBS_DIM = N_SITES + 1 + 1 + 1 + 3 + 3 * N_CENTRES + N_SITES + N_SITES  # 45
+# Minutes of slack that map to 1.0 in the time-left features: enough to tell
+# a trip that fits in the shift from one that does not, near the end of it.
+SLACK_SCALE_MIN = 60.0
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,9 @@ class DroneConfig:
     max_wind_kmh: float = 40.0
     wind_mult: float = 1.0  # scales wind strength (generalisation tests)
     hover_energy_per_min: float = 0.35  # loitering over a centre
+    # return-to-base rule: a flight is only launched if the drone can still get
+    # home before the shift ends with this much battery to spare (covers wind drift)
+    return_reserve: float = 2.0  # percent
     # flight operations: catapult launch at the hub, a descent to 35 m over the
     # centre's drop zone for the parachute release, and the approach circuit
     # into the recovery wire back at the hub
@@ -140,7 +146,7 @@ class DroneConfig:
     r_wasted_trip: float = -1.0
     r_invalid: float = -0.5
     r_crash: float = -40.0  # plus every request the grounded service will now miss
-    r_stranded: float = -15.0
+    r_stranded: float = -25.0
     # start state randomisation
     start_battery_range: tuple = (70.0, 100.0)
     start_orders_max: int = 2
@@ -444,15 +450,33 @@ class DroneDeliveryEnv(gym.Env):
 
     # --------------------------------------------------------- observation
     def action_mask(self) -> np.ndarray:
+        """Commands the flight controller accepts now. Return-to-base rule: a
+        flight is allowed only if the battery covers it and the flight home after
+        it, with a small reserve, and both land before the shift ends; holding
+        over a centre only while the drone can still get home afterwards."""
         c = self.cfg
         m = np.zeros(N_ACTIONS, dtype=np.int8)
-        m[A_HOLD] = 1
-        if self.loc != HUB and self.flight_energy(self.loc, HUB) <= self.battery:
-            m[A_RETURN] = 1
+        t_left = c.shift_minutes - self.t
+
+        def gets_home(dest: int) -> bool:
+            energy = self.flight_energy(self.loc, dest) + self.flight_energy(dest, HUB)
+            minutes = self.flight_minutes(self.loc, dest) + (self.flight_minutes(dest, HUB) if dest != HUB else 0.0)
+            return energy + c.return_reserve <= self.battery and minutes <= t_left
+
+        if self.loc != HUB and self.flight_energy(self.loc, HUB) <= self.battery \
+                and self.flight_minutes(self.loc, HUB) <= t_left:
+            m[A_RETURN] = 1  # going home is always allowed when it can land in time
         if self.cargo > 0:
             for i in range(1, N_SITES):
-                if i != self.loc and self.flight_energy(self.loc, i) <= self.battery:
+                if i != self.loc and gets_home(i):
                     m[A_DELIVER_FIRST + i - 1] = 1
+        if self.loc == HUB:
+            m[A_HOLD] = 1
+        else:
+            after = self.battery - c.hover_energy_per_min * c.hold_minutes
+            can_wait = (after >= self.flight_energy(self.loc, HUB) + c.return_reserve
+                        and c.hold_minutes + self.flight_minutes(self.loc, HUB) <= t_left)
+            m[A_HOLD] = 1 if can_wait or not m.any() else 0  # never leave the controller without a command
         if self.loc == HUB and self.battery < c.battery_capacity - 1e-6:
             m[A_RECHARGE] = 1
         if self.loc == HUB and self.cargo < c.cargo_capacity:
@@ -490,6 +514,17 @@ class DroneDeliveryEnv(gym.Env):
                 drop = 1 if self.cargo > 0 else 0
                 need = self.flight_energy(self.loc, i) + self.flight_energy(i, HUB, cargo=self.cargo - drop)
             o[k + i] = np.clip(need / c.battery_capacity, 0.0, 1.0)
+        k += N_SITES
+        # shift minutes left after flying to each site now and then home; below zero
+        # the trip cannot finish before the shift ends (flight planner estimate)
+        t_left = c.shift_minutes - self.t
+        home = self.flight_minutes(self.loc, HUB) if self.loc != HUB else 0.0
+        for i in range(N_SITES):
+            if i in (HUB, self.loc):
+                trip = home
+            else:
+                trip = self.flight_minutes(self.loc, i) + self.flight_minutes(i, HUB)
+            o[k + i] = np.clip((t_left - trip) / SLACK_SCALE_MIN, -1.0, 1.0)
         return o
 
     def _info(self) -> dict:
