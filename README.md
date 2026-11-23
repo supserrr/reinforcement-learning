@@ -59,7 +59,7 @@ uv run python -m training.dqn_training --runs 4 --seed 1             # seed repe
 uv run python -m training.analyze --retest                           # test evaluation, seed check, plots, tables
 ```
 
-The same sweeps run on Google Colab with [`training/colab.ipynb`](https://colab.research.google.com/github/supserrr/reinforcement-learning/blob/main/training/colab.ipynb) (about 2–2.5 hours on a CPU runtime).
+The same sweeps run on Google Colab with [`training/colab.ipynb`](https://colab.research.google.com/github/supserrr/shima_serein_rl_summative/blob/main/training/colab.ipynb) (about 2–2.5 hours on a CPU runtime).
 
 ## Results
 

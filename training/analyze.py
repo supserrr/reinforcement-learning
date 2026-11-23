@@ -213,7 +213,7 @@ def fig_reward_curves(data, base):
             ax.annotate(NAME[algo], (lx, ly - max(over, 0)), xytext=(8, 0), textcoords="offset points", va="center",
                         fontsize=9, color=INK, fontweight="bold", annotation_clip=False)
         h = base["heuristic"]["default"]["return_mean"]
-        ax.axhline(h, color=INK2, lw=1.2, ls=(0, (4, 3)), label=f"hand-written dispatcher ({h:+.0f})")
+        ax.axhline(h, color=INK2, lw=1.2, ls=(0, (4, 3)), label=f"hand-written dispatcher ({h:+.1f})")
         ax.set_title(title, loc="left")
         ax.set_xlabel("environment steps (thousands)")
     axes[0].set_ylabel("shift return")
@@ -318,7 +318,7 @@ def fig_convergence(data, base):
     ax.invert_yaxis()
     ax.axvline(max_f / 1000, color=MUTED, lw=1)
     ax.set_xlabel("environment steps (thousands) until the greedy policy first matches the dispatcher "
-                  f"({level:+.0f})")
+                  f"({level:+.1f})")
     ax.set_title("Convergence speed: one dot per hyperparameter run (hollow = never reached it in 600k steps)",
                  loc="left")
     fig.savefig(PLOTS / "convergence.png")
