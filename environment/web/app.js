@@ -209,9 +209,12 @@ function startStep(msg) {
     const delivered = ev.find((e) => e.type === "delivered");
     anim.flight = world.planLeg({ from: leg.from, to: leg.to, drop: !!delivered, crash: crash ? Math.max(crash.fraction, crash.from === crash.to ? 0 : 0.02) : null });
     anim.dur = anim.flight.dur;
+    // the shift ended before this flight landed: play the leg only up to that point
+    anim.cut = flight && flight.landed === false ? flight.fraction : null;
+    if (anim.cut != null) anim.dur = Math.max(anim.flight.dur * anim.cut, 400);
     anim.delivered = delivered;
     if (leg.from !== leg.to) world.showRoute(anim.flight, leg.to);
-    if (flight && !SITES[flight.to].hub) showPopup(flight.to, flight.from, prevSnap);
+    if (flight && !SITES[flight.to].hub && anim.cut == null) showPopup(flight.to, flight.from, prevSnap);
     setState(crash ? "Falling" : SITES[leg.from].hub ? "Launching" : "Flying", msg.action_name);
   } else if (ev.some((e) => e.type === "hold")) {
     setState(snap.loc !== 0 ? "Circling" : "Waiting", msg.action_name);
@@ -243,10 +246,10 @@ function finishStep() {
     if (e.type === "delivered" && !anim.toasted) toast(`Delivered to ${SITES[e.at].name}`, "good");
     if (e.type === "wasted") toast(`Wasted trip, ${e.reason}`);
     if (e.type === "crash") { toast("Battery empty, drone down", "bad"); setState("Down", msg.action_name); }
-    if (e.type === "stranded") toast("Shift ended away from the hub", "bad");
+    if (e.type === "stranded") toast(e.in_flight ? "Shift ended before the drone landed" : "Shift ended away from the hub", "bad");
     if (e.type === "shift_end") { toast(`Shift over, return ${signed(snap.total_reward)}`, "good"); setState("Shift over", msg.action_name); }
   }
-  if (!down) world.idleAt(snap.loc); // circle the centre, or back into the charging dock
+  if (!down && !snap.airborne) world.idleAt(snap.loc); // circle the centre, or back into the charging dock
   if (["Flying", "Launching", "Landing", "Dropping", "Caught"].includes($("state").textContent)) setState(snap.loc === 0 ? "At hub" : "Circling", msg.action_name);
   setHud(snap);
   setRequests(snap);
@@ -276,8 +279,9 @@ function tickStep(now, dt) {
     k = Math.min(k, 1);
     setWarp(st.warp * speed * catchUp());
     if (!anim.reset) { // the shift clock and battery follow the drone along its leg
-      setBattery(anim.b0 + (anim.b1 - anim.b0) * st.frac);
-      setClock(anim.t0sim + (anim.t1sim - anim.t0sim) * st.frac, anim.msg.snapshot.shift_minutes);
+      const f = anim.cut != null ? Math.min(st.frac / Math.max(anim.cut, 1e-6), 1) : st.frac;
+      setBattery(anim.b0 + (anim.b1 - anim.b0) * f);
+      setClock(anim.t0sim + (anim.t1sim - anim.t0sim) * f, anim.msg.snapshot.shift_minutes);
     }
   } else if (!anim.reset) {
     setWarp(((anim.t1sim - anim.t0sim) * 60000) / anim.dur * speed * catchUp());

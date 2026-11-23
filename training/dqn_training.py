@@ -77,8 +77,11 @@ def train(hp: dict, run_name: str) -> dict:
     optim = torch.optim.Adam(loss_fn.parameters(), lr=hp["lr"])
 
     rb = TensorDictReplayBuffer(storage=LazyTensorStorage(hp["buffer_size"]), batch_size=hp["batch_size"])
-    collector = Collector(env, policy, frames_per_batch=hp["frames_per_batch"],
-                          total_frames=hp["total_frames"], init_random_frames=hp["learning_starts"])
+    # No init_random_frames: TorchRL's random warm-up policy ignores the action
+    # mask, and a ruled-out action stored in the buffer has a masked Q-value of
+    # -3.4e38, so its TD error is infinite. The mask-aware epsilon-greedy policy
+    # starts at epsilon 1.0 instead, and updates wait for learning_starts steps.
+    collector = Collector(env, policy, frames_per_batch=hp["frames_per_batch"], total_frames=hp["total_frames"])
 
     log = RunLogger("dqn", run_name, hp)
     frames, recent, losses, qvals = 0, [], [], []
@@ -102,6 +105,7 @@ def train(hp: dict, run_name: str) -> dict:
         if frames >= next_log:
             next_log += 5_000
             quick = evaluate(net, QUICK_EVAL_SEEDS)["return_mean"]
+            log.checkpoint(net, quick, frames)
             log.log(frames=frames, episodes_done=len(recent),
                     train_return=float(sum(recent[-20:]) / max(len(recent[-20:]), 1)) if recent else None,
                     eval_return=quick, loss=float(sum(losses) / max(len(losses), 1)) if losses else None,
@@ -119,8 +123,9 @@ def main():
     ap.add_argument("--runs", type=int, nargs="*", help="run only these configuration indices")
     ap.add_argument("--jobs", type=int, default=1)
     ap.add_argument("--frames", type=int, default=None, help="override total frames (smoke tests)")
+    ap.add_argument("--seed", type=int, default=None, help="repeat the runs on another training seed")
     a = ap.parse_args()
-    run_sweep(train, "dqn", SWEEP, a.jobs, a.frames, None if a.sweep else (a.runs or [0]))
+    run_sweep(train, "dqn", SWEEP, a.jobs, a.frames, None if a.sweep else (a.runs or [0]), a.seed)
 
 
 if __name__ == "__main__":

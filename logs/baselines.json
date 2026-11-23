@@ -1,21 +1,21 @@
 {
   "heuristic": {
     "default": {
-      "return_mean": 11.85,
-      "return_std": 24.854124406222805,
-      "service_rate": 0.5627954939797044,
+      "return_mean": 11.6,
+      "return_std": 26.51490147068248,
+      "service_rate": 0.5193040767711821,
       "crashed": 0.0
     },
     "busy": {
-      "return_mean": 0.95,
-      "return_std": 29.3026875900488,
-      "service_rate": 0.46268922640826665,
+      "return_mean": -0.05,
+      "return_std": 30.153731112417912,
+      "service_rate": 0.4525528141878762,
       "crashed": 0.0
     },
     "windy": {
-      "return_mean": 12.2,
-      "return_std": 25.32311197305734,
-      "service_rate": 0.5635320016241068,
+      "return_mean": 11.6,
+      "return_std": 26.562002936525698,
+      "service_rate": 0.5265561072914015,
       "crashed": 0.0
     }
   },

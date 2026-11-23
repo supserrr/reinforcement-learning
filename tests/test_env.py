@@ -69,6 +69,34 @@ def test_shift_ends_at_480_minutes():
     assert steps == 96
 
 
+def test_flight_still_in_the_air_at_shift_end_is_stranded():
+    env = DroneDeliveryEnv()
+    env.reset(seed=0)
+    env.requests = [None] * 7
+    env.loc, env.battery, env.cargo = 3, 100.0, 0
+    env.t = 480.0 - env.flight_minutes(3, HUB) / 2  # half the way home is left when the shift ends
+    _, r, te, *_ = env.step(A_RETURN)
+    assert te and env.stats.stranded and env.loc == 3
+    assert env.t == pytest.approx(480.0)
+    assert r == pytest.approx(env.cfg.r_stranded)
+
+
+def test_return_that_lands_in_time_is_not_stranded():
+    env = DroneDeliveryEnv()
+    env.reset(seed=0)
+    env.requests = [None] * 7
+    env.loc, env.battery, env.cargo = 3, 100.0, 0
+    env.t = 480.0 - env.flight_minutes(3, HUB) - 1.0
+    env.step(A_RETURN)
+    assert env.loc == HUB and not env.stats.stranded
+
+
+def test_dispatcher_is_home_when_the_shift_ends():
+    for s in range(20):
+        env, _ = rollout(lambda e, o: heuristic_action(e), seed=s)
+        assert not env.stats.stranded and not env.stats.crashed
+
+
 def test_crash_is_worse_than_doing_nothing():
     env = DroneDeliveryEnv()
     env.reset(seed=3)

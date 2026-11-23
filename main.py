@@ -33,7 +33,16 @@ def best_dir(algo: str) -> Path:
 
 
 def best_algo() -> str:
-    """The algorithm whose best sweep run scored highest on the validation seeds."""
+    """The algorithm with the highest normal-day score in the final test
+    comparison (logs/test_results.json), or, before that exists, the one whose
+    best sweep run scored highest on the validation seeds."""
+    test = ROOT / "logs" / "test_results.json"
+    if test.exists():
+        res = json.loads(test.read_text())["results"]
+        scores = {a: res[a]["default"]["return_mean"] for a in ALGOS
+                  if a in res and (best_dir(a) / "model.pt").exists()}
+        if scores:
+            return max(scores, key=scores.get)
     scores = {}
     for algo in ALGOS:
         table = ROOT / "logs" / algo / "sweep_summary.csv"

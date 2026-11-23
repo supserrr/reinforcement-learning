@@ -16,7 +16,7 @@ Every decision the drone makes changes what it can do next:
 * Requests carry over. A routine request ignored now can turn into a missed
   deadline an hour later, and emergencies arrive while the drone is away.
 * Position carries over. The drone has to be back at the hub when the shift
-  ends.
+  ends, and a flight still in the air at that moment has not landed.
 
 The environment is event-driven: each step is one operational decision
 (fly somewhere, hold, recharge, load), and the simulation clock moves forward
@@ -210,6 +210,7 @@ class DroneDeliveryEnv(gym.Env):
         c = self.cfg
         self.t = 0.0
         self.loc = HUB
+        self.airborne = False  # only at the end of a shift that ended mid-flight
         self.battery = float(self.np_random.uniform(*c.start_battery_range))
         self.cargo = 0
         self.wind_speed = float(self.np_random.uniform(0.1, 0.7))  # fraction of max
@@ -248,9 +249,12 @@ class DroneDeliveryEnv(gym.Env):
             else:
                 need = self.flight_energy(self.loc, dest)
                 minutes = self.flight_minutes(self.loc, dest)
-                if need > self.battery:
+                t_left = c.shift_minutes - self.t
+                crash_frac = max(self.battery, 0.0) / need if need > self.battery else None
+                cut_frac = t_left / minutes if minutes > t_left else None
+                if crash_frac is not None and (cut_frac is None or crash_frac <= cut_frac):
                     # battery runs out part-way: the drone goes down
-                    frac = max(self.battery, 0.0) / need
+                    frac = crash_frac
                     events.append({"type": "crash", "from": self.loc, "to": dest, "fraction": frac,
                                    "minutes": minutes * frac})
                     self.stats.km_flown += self._dist[self.loc, dest] * frac
@@ -259,6 +263,15 @@ class DroneDeliveryEnv(gym.Env):
                     reward += self._crash_penalty()
                     terminated = True
                     minutes = minutes * frac
+                elif cut_frac is not None:
+                    # the shift ends before the drone lands: it is still in the air, so it
+                    # has not reached the hub and cannot drop a package
+                    events.append({"type": "flight", "from": self.loc, "to": dest, "minutes": t_left,
+                                   "energy": need * cut_frac, "landed": False, "fraction": cut_frac})
+                    self.battery -= need * cut_frac
+                    self.stats.km_flown += self._dist[self.loc, dest] * cut_frac
+                    self.airborne = True
+                    minutes = t_left
                 else:
                     events.append({"type": "flight", "from": self.loc, "to": dest, "minutes": minutes,
                                    "energy": need})
@@ -297,7 +310,8 @@ class DroneDeliveryEnv(gym.Env):
 
         # Drop a package on arrival at a centre (after the clock moved, so a
         # request that expired in flight is no longer there).
-        if not terminated and A_DELIVER_FIRST <= action < A_DELIVER_FIRST + N_CENTRES and self.loc != HUB:
+        if (not terminated and not self.airborne and A_DELIVER_FIRST <= action < A_DELIVER_FIRST + N_CENTRES
+                and self.loc != HUB):
             req = self.requests[self.loc]
             if self.cargo == 0:
                 reward += c.r_wasted_trip
@@ -332,10 +346,10 @@ class DroneDeliveryEnv(gym.Env):
         truncated = False
         if not terminated and self.t >= c.shift_minutes:
             terminated = True
-            if self.loc != HUB:
+            if self.loc != HUB or self.airborne:
                 reward += c.r_stranded
                 self.stats.stranded = True
-                events.append({"type": "stranded", "at": self.loc})
+                events.append({"type": "stranded", "at": self.loc, "in_flight": self.airborne})
             events.append({"type": "shift_end"})
         elif not terminated and self.decisions >= c.max_decisions:
             truncated = True
@@ -489,6 +503,7 @@ class DroneDeliveryEnv(gym.Env):
             "t": round(self.t, 2),
             "shift_minutes": self.cfg.shift_minutes,
             "loc": self.loc,
+            "airborne": self.airborne,
             "battery": round(self.battery, 2),
             "cargo": self.cargo,
             "cargo_capacity": self.cfg.cargo_capacity,
@@ -522,12 +537,18 @@ def heuristic_action(env: DroneDeliveryEnv) -> int:
 
 def _heuristic(env: DroneDeliveryEnv) -> int:
     """Hand-written dispatcher used as a non-learning baseline: serve the most
-    urgent reachable request, keep a 15% battery reserve, recharge below 60%."""
+    urgent reachable request, keep a 15% battery reserve, recharge below 60%,
+    and only start trips that are back at the hub before the shift ends."""
     c = env.cfg
     reserve = 15.0
+    time_left = c.shift_minutes - env.t
+
+    def round_trip(i: int) -> float:  # minutes to fly to centre i and back to the hub from here
+        return env.flight_minutes(env.loc, i) + env.flight_minutes(i, HUB)
+
     open_reqs = [(i, r) for i, r in enumerate(env.requests) if r is not None]
     if env.loc == HUB:
-        if env.cargo < c.cargo_capacity and open_reqs:
+        if env.cargo < c.cargo_capacity and any(c.load_minutes + round_trip(i) <= time_left for i, _ in open_reqs):
             return A_LOAD
         if env.battery < 60.0:
             return A_RECHARGE
@@ -535,7 +556,7 @@ def _heuristic(env: DroneDeliveryEnv) -> int:
         ranked = sorted(open_reqs, key=lambda ir: (not ir[1].emergency, ir[1].deadline - env.t))
         for i, _ in ranked:
             need = env.flight_energy(env.loc, i) + env.flight_energy(i, HUB, cargo=env.cargo - 1)
-            if need + reserve <= env.battery and i != env.loc:
+            if need + reserve <= env.battery and i != env.loc and round_trip(i) <= time_left:
                 return A_DELIVER_FIRST + i - 1
     if env.loc != HUB:
         return A_RETURN

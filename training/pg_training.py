@@ -150,6 +150,7 @@ def train_ppo_a2c(hp: dict, run_name: str, algo: str) -> dict:
             next_log += 5_000
             row = dict(frames=frames, episodes_done=len(recent), train_return=_mean(recent[-20:]),
                        eval_return=evaluate(actor_net, QUICK_EVAL_SEEDS)["return_mean"])
+            log.checkpoint(actor_net, row["eval_return"], frames)
             row.update({k: _mean(v) for k, v in acc.items()})
             log.log(**row)
             acc = {}
@@ -218,6 +219,7 @@ def train_reinforce(hp: dict, run_name: str) -> dict:
             next_log += 5_000
             row = dict(frames=frames, episodes_done=len(recent), train_return=_mean(recent[-20:]),
                        eval_return=evaluate(actor_net, QUICK_EVAL_SEEDS)["return_mean"])
+            log.checkpoint(actor_net, row["eval_return"], frames)
             row.update({k: _mean(v) for k, v in acc.items()})
             log.log(**row)
             acc = {}
@@ -250,9 +252,10 @@ def main():
     ap.add_argument("--runs", type=int, nargs="*")
     ap.add_argument("--jobs", type=int, default=1)
     ap.add_argument("--frames", type=int, default=None)
+    ap.add_argument("--seed", type=int, default=None, help="repeat the runs on another training seed")
     a = ap.parse_args()
     run_sweep(PICKLABLE[a.algo], a.algo, SWEEPS[a.algo], a.jobs, a.frames,
-              None if a.sweep else (a.runs or [0]))
+              None if a.sweep else (a.runs or [0]), a.seed)
 
 
 if __name__ == "__main__":

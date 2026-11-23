@@ -27,7 +27,7 @@ This plays the best agent in a three.js viewer in the browser and prints every d
 - **Actions (10):** Hold, Return to Hub, Deliver to one of 6 centres, Recharge, Load Package. An action mask rules out commands the drone cannot carry out.
 - **Observation (38 values in [−1, 1]):** location, battery, cargo, time, wind, each centre's request, emergency flag and time left, and the battery needed to reach each site and get back.
 - **Start:** at the hub with 70–100% battery, no cargo, up to 2 open requests and a random wind.
-- **End:** the shift reaches 480 minutes, or the drone crashes.
+- **End:** the shift reaches 480 minutes, or the drone crashes. A flight still in the air at 480 minutes has not landed: it delivers nothing and counts as away from the hub.
 
 | Event | Reward |
 |---|---|
@@ -36,7 +36,7 @@ This plays the best agent in a three.js viewer in the browser and prints every d
 | Emergency missed | −10 |
 | Routine missed | −3 |
 | Trip to a centre with no request | −1 |
-| Shift ends away from the hub | −15 |
+| Shift ends away from the hub or still in the air | −15 |
 | Crash (battery runs out in flight) | −40, plus the requests it will now miss |
 
 **Visualisation:** `environment/rendering.py` streams each step to a three.js scene in `environment/web/`: satellite imagery over real elevation, the hub and health centres, and a fixed-wing drone that launches, drops packages by parachute and lands on a recovery wire. The map and 3D models are baked into the repo by `scripts/`, so the viewer runs offline.
@@ -50,12 +50,13 @@ Imagery: Sentinel-2 cloudless 2025 by EOX (modified Copernicus Sentinel data), C
 | `training/dqn_training.py` | DQN (`DQNLoss`) |
 | `training/pg_training.py` | REINFORCE (`ReinforceLoss`), PPO (`ClipPPOLoss`), A2C (`A2CLoss`) |
 
-Each algorithm has 10 hyperparameter runs of 600,000 steps. The best run of each is picked on 20 validation seeds, then the four best are compared on 200 test seeds used for nothing else.
+Each algorithm has 10 hyperparameter runs of 600,000 steps. Every run keeps its best checkpoint on 20 checkpoint seeds, the best run of each algorithm is picked on 20 validation seeds, and the four best are compared on 200 test seeds used for nothing else. The best configuration of each algorithm is also retrained on training seeds 1 and 2 to show how much one seed can move a score.
 
 ```bash
 uv run python -m training.dqn_training --sweep --jobs 2
 uv run python -m training.pg_training --algo ppo --sweep --jobs 2    # also: reinforce, a2c
-uv run python -m training.analyze                                    # test evaluation, plots, tables
+uv run python -m training.dqn_training --runs 4 --seed 1             # seed repeat of one configuration
+uv run python -m training.analyze --retest                           # test evaluation, seed check, plots, tables
 ```
 
 The same sweeps run on Google Colab with [`training/colab.ipynb`](https://colab.research.google.com/github/supserrr/reinforcement-learning/blob/main/training/colab.ipynb) (about 2–2.5 hours on a CPU runtime).
@@ -64,15 +65,15 @@ The same sweeps run on Google Colab with [`training/colab.ipynb`](https://colab.
 
 Mean return per shift; test scores are over 200 shifts, ± standard error.
 
-| Agent | Validation | Test: normal day | Busy day | Windy day |
-|---|---|---|---|---|
-| DQN | +37.4 | +31.6 ± 1.5 | +19.3 | +31.6 |
-| PPO | +43.0 | +31.5 ± 1.8 | +12.6 | +30.6 |
-| A2C | +29.1 | +23.0 ± 1.3 | +6.4 | +23.3 |
-| REINFORCE | +5.1 | +1.9 ± 1.9 | −9.2 | +2.3 |
-| Hand-written dispatcher | +11.8 | +9.4 ± 1.7 | −11.6 | +8.8 |
+| Agent | Validation | Test: normal day | Busy day | Windy day | Test, 3 training seeds |
+|---|---|---|---|---|---|
+| DQN | +38.0 | +27.7 ± 1.4 | +17.0 | +27.3 | +25.1 ± 2.5 |
+| PPO | +31.5 | +25.0 ± 1.6 | +6.1 | +22.8 | +18.7 ± 6.7 |
+| A2C | +38.4 | +22.8 ± 2.2 | +2.5 | +22.4 | +17.2 ± 5.6 |
+| REINFORCE | −6.1 | −12.0 ± 1.9 | −30.5 | −12.6 | −5.4 ± 8.0 |
+| Hand-written dispatcher | +11.6 | +9.3 ± 1.7 | −12.1 | +8.7 | |
 
-DQN and PPO tie on normal and windy days; DQN is ahead on busy days. Validation scores are higher because the best runs were picked on them. More detail: `assets/tables/headline.md` (test comparison), `logs/<algo>/sweep_summary.csv` (all 40 runs) and `assets/plots/`.
+DQN leads in every condition and is the most consistent across training seeds (last column: mean ± standard deviation of the best configuration retrained on seeds 0, 1 and 2). PPO is within noise of it on normal days but crashes more on busy ones. Validation scores are higher because the best runs were picked on them. More detail: `assets/tables/headline.md` (test comparison and seed check), `logs/<algo>/sweep_summary.csv` (all 40 runs) and `assets/plots/`.
 
 ## Structure
 

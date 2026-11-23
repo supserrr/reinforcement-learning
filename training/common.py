@@ -3,6 +3,7 @@ networks, evaluation on unseen seeds, logging and the sweep runner."""
 
 from __future__ import annotations
 
+import copy
 import csv
 import json
 import os
@@ -25,8 +26,9 @@ MODELS = ROOT / "models"
 # Validation: every run is scored on these, and the best run of each sweep is
 # picked by its score here, so these scores flatter the winner a little.
 EVAL_SEEDS = list(range(10_000, 10_020))
-# Checked every 5,000 steps during training for the learning curves.
-QUICK_EVAL_SEEDS = list(range(20_000, 20_005))
+# Checked every 5,000 steps during training: the learning curves, and the
+# checkpoint each run keeps (its best score on these seeds).
+QUICK_EVAL_SEEDS = list(range(20_000, 20_020))
 # Test: used only once, after the best runs are picked, for the final comparison
 # (training/analyze.py). Nothing is chosen or tuned on them.
 TEST_SEEDS = list(range(30_000, 30_200))
@@ -120,13 +122,15 @@ def evaluate_all(net: nn.Module) -> dict:
 
 
 class RunLogger:
-    """Writes one metrics.csv per run plus a summary.json at the end."""
+    """Writes one metrics.csv per run plus a summary.json at the end, and
+    keeps the run's best checkpoint on the QUICK_EVAL_SEEDS."""
 
     def __init__(self, algo: str, run_name: str, hparams: dict):
         self.dir = LOGS / algo / run_name
         self.dir.mkdir(parents=True, exist_ok=True)
         self.algo, self.run_name, self.hparams = algo, run_name, hparams
         self.rows: list[dict] = []
+        self.best: tuple[float, int, dict] | None = None
         self.t0 = time.time()
         (self.dir / "hparams.json").write_text(json.dumps(hparams, indent=2))
 
@@ -134,7 +138,15 @@ class RunLogger:
         row["wall_s"] = round(time.time() - self.t0, 1)
         self.rows.append(row)
 
+    def checkpoint(self, net: nn.Module, score: float, frames: int):
+        """Remember the network if it scored its best so far on the QUICK_EVAL_SEEDS."""
+        if self.best is None or score > self.best[0]:
+            self.best = (score, frames, copy.deepcopy(net.state_dict()))
+
     def finish(self, net: nn.Module, extra: dict | None = None) -> dict:
+        if self.best is not None:  # evaluate and save the best checkpoint, not the last weights
+            net.load_state_dict(self.best[2])
+            extra = {**(extra or {}), "checkpoint_frames": self.best[1], "checkpoint_return": self.best[0]}
         keys: list[str] = []
         for r in self.rows:
             keys += [k for k in r if k not in keys]
@@ -160,24 +172,34 @@ def episode_returns(data) -> list[float]:
     return []
 
 
-def run_sweep(train_fn, algo: str, configs: list[dict], jobs: int, frames: int | None, only: list[int] | None):
+def run_name(i: int, seed: int | None = None) -> str:
+    """run07 for the sweep (training seed 0); seed1_run07 for a repeat of
+    configuration 7 on another training seed, which the sweep table ignores."""
+    return f"run{i:02d}" if seed is None else f"seed{seed}_run{i:02d}"
+
+
+def run_sweep(train_fn, algo: str, configs: list[dict], jobs: int, frames: int | None, only: list[int] | None,
+              seed: int | None = None):
     """Run every hyperparameter configuration, in parallel processes, then
-    write the sweep table and promote the best run to models/<algo>/best."""
+    write the sweep table and promote the best run to models/<algo>/best.
+    With a seed, rerun the chosen configurations on that training seed."""
     idx = only if only else list(range(len(configs)))
     todo = []
     for i in idx:
         hp = dict(configs[i])
         if frames:
             hp["total_frames"] = frames
+        if seed is not None:
+            hp["seed"] = seed
         todo.append((i, hp))
     results = []
     if jobs <= 1:
         for i, hp in todo:
-            results.append(train_fn(hp, f"run{i:02d}"))
+            results.append(train_fn(hp, run_name(i, seed)))
             _print_result(results[-1])
     else:
         with ProcessPoolExecutor(max_workers=jobs) as ex:
-            futs = {ex.submit(_worker, train_fn, hp, f"run{i:02d}"): i for i, hp in todo}
+            futs = {ex.submit(_worker, train_fn, hp, run_name(i, seed)): i for i, hp in todo}
             for f in as_completed(futs):
                 results.append(f.result())
                 _print_result(results[-1])
@@ -200,7 +222,7 @@ def write_sweep_table(algo: str):
     """logs/<algo>/sweep_summary.csv: one row per run, hyperparameters and
     unseen-seed results side by side; copies the best model to best.pt."""
     rows = []
-    for p in sorted((LOGS / algo).glob("run*/summary.json")):
+    for p in sorted((LOGS / algo).glob("run[0-9]*/summary.json")):
         s = json.loads(p.read_text())
         row = {"run": s["run"], **s["hparams"]}
         for cfg, ev in s["eval"].items():

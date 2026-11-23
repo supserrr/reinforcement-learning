@@ -15,7 +15,7 @@
     "seed": 0,
     "note": "baseline"
   },
-  "wall_s": 253.3,
+  "wall_s": 318.2,
   "eval": {
     "default": {
       "return_mean": -83.4,
@@ -29,23 +29,23 @@
       "stranded": 0.0,
       "wasted_trips": 0.0,
       "invalid_actions": 0.0,
-      "recharges": 0.0,
+      "recharges": 0.1,
       "km_flown": 0.0,
       "mean_emergency_wait": 0.0
     },
     "busy": {
-      "return_mean": -118.4,
-      "return_std": 17.159254063041317,
+      "return_mean": -117.9,
+      "return_std": 17.905027227010855,
       "delivered_emergency": 0.0,
       "delivered_routine": 0.0,
-      "missed_emergency": 10.1,
+      "missed_emergency": 10.05,
       "missed_routine": 5.8,
       "service_rate": 0.0,
       "crashed": 0.0,
       "stranded": 0.0,
       "wasted_trips": 0.0,
       "invalid_actions": 0.0,
-      "recharges": 0.0,
+      "recharges": 0.25,
       "km_flown": 0.0,
       "mean_emergency_wait": 0.0
     },
@@ -61,11 +61,13 @@
       "stranded": 0.0,
       "wasted_trips": 0.0,
       "invalid_actions": 0.0,
-      "recharges": 0.0,
+      "recharges": 0.1,
       "km_flown": 0.0,
       "mean_emergency_wait": 0.0
     }
   },
-  "final_train_return": -79.7,
-  "episodes": 6642
+  "final_train_return": -82.24,
+  "episodes": 6517,
+  "checkpoint_frames": 5120,
+  "checkpoint_return": -79.65
 }

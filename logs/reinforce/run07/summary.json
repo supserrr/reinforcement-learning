@@ -14,7 +14,7 @@
     "seed": 0,
     "note": "no entropy bonus"
   },
-  "wall_s": 234.7,
+  "wall_s": 223.9,
   "eval": {
     "default": {
       "return_mean": -83.4,
@@ -28,7 +28,7 @@
       "stranded": 0.0,
       "wasted_trips": 0.0,
       "invalid_actions": 0.0,
-      "recharges": 0.0,
+      "recharges": 0.05,
       "km_flown": 0.0,
       "mean_emergency_wait": 0.0
     },
@@ -44,7 +44,7 @@
       "stranded": 0.0,
       "wasted_trips": 0.0,
       "invalid_actions": 0.0,
-      "recharges": 0.0,
+      "recharges": 0.05,
       "km_flown": 0.0,
       "mean_emergency_wait": 0.0
     },
@@ -60,11 +60,13 @@
       "stranded": 0.0,
       "wasted_trips": 0.0,
       "invalid_actions": 0.0,
-      "recharges": 0.0,
+      "recharges": 0.05,
       "km_flown": 0.0,
       "mean_emergency_wait": 0.0
     }
   },
-  "final_train_return": -82.94,
-  "episodes": 7008
+  "final_train_return": -77.58,
+  "episodes": 7040,
+  "checkpoint_frames": 30090,
+  "checkpoint_return": -79.65
 }

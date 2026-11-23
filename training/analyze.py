@@ -50,8 +50,9 @@ plt.rcParams.update({
 
 # ------------------------------------------------------------------ loading
 def load(algo: str) -> dict[str, dict]:
+    """The sweep runs (run00..run09, training seed 0); seed repeats are read by seed_check."""
     runs = {}
-    for d in sorted((LOGS / algo).glob("run*")):
+    for d in sorted((LOGS / algo).glob("run[0-9]*")):
         if (d / "summary.json").exists() and (d / "metrics.csv").exists():
             try:
                 m = pd.read_csv(d / "metrics.csv")
@@ -135,6 +136,47 @@ def test_results(retest: bool = False) -> dict:
     return out
 
 
+def load_net(algo: str, d: Path):
+    """The network saved in a run's model directory (observation -> action scores)."""
+    import torch
+    from torch import nn
+
+    from environment import N_ACTIONS, OBS_DIM
+    from training.common import mlp
+
+    hp = json.loads((d / "hparams.json").read_text())
+    net = mlp(OBS_DIM, N_ACTIONS, hp["hidden"], act=nn.ReLU if algo == "dqn" else nn.Tanh)
+    net.load_state_dict(torch.load(d / "model.pt", map_location="cpu"))
+    net.eval()
+    return net
+
+
+def seed_check(data, retest: bool = False) -> dict:
+    """The best configuration of each method retrained on training seeds 1 and
+    2 (seedN_runXX): validation and test returns per seed, to show how much of
+    a sweep gap one training seed can explain. Cached in logs/seed_check.json."""
+    path = LOGS / "seed_check.json"
+    picked = {a: best_run(data[a]) for a in ALGOS if data[a]}
+    if path.exists() and not retest:
+        cached = json.loads(path.read_text())
+        if cached.get("best_runs") == picked:
+            return cached
+    out = {"best_runs": picked, "results": {}}
+    for a, b in picked.items():
+        sub = "dqn" if a == "dqn" else "pg"
+        names = [b] + sorted(p.name for p in (LOGS / a).glob(f"seed*_{b}") if (p / "summary.json").exists())
+        rows = []
+        for name in names:
+            s = json.loads((LOGS / a / name / "summary.json").read_text())
+            net = load_net(a, ROOT / "models" / sub / a / name)
+            t = rollout(lambda e, o, net=net: greedy_action(net, o), TEST_SEEDS, "default")
+            rows.append({"run": name, "seed": s["hparams"]["seed"],
+                         "validation": s["eval"]["default"]["return_mean"], "test": t["return_mean"]})
+        out["results"][a] = rows
+    path.write_text(json.dumps(out, indent=2) + "\n")
+    return out
+
+
 def smooth(y: pd.Series, k: int = 3) -> pd.Series:
     return y.rolling(k, min_periods=1, center=True).mean()
 
@@ -149,7 +191,7 @@ def end_label(ax, x, y, text, color):
 def fig_reward_curves(data, base):
     fig, axes = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
     for ax, col, title in ((axes[0], "train_return", "Training episodes (exploring policy)"),
-                           (axes[1], "eval_return", "Greedy policy on 5 held-out seeds")):
+                           (axes[1], "eval_return", "Greedy policy on 20 checkpoint seeds")):
         ends = []
         for algo in ALGOS:
             if not data[algo]:
@@ -175,7 +217,8 @@ def fig_reward_curves(data, base):
         ax.set_title(title, loc="left")
         ax.set_xlabel("environment steps (thousands)")
     axes[0].set_ylabel("shift return")
-    axes[0].legend(loc="lower right", fontsize=8.5)
+    handles, labels = axes[0].get_legend_handles_labels()  # below the plots, clear of every line
+    fig.legend(handles, labels, loc="lower center", ncols=len(labels), fontsize=8.5, bbox_to_anchor=(0.5, -0.06))
     fig.suptitle("Return per shift, best run of each algorithm", x=0.06, ha="left", fontweight="bold")
     fig.subplots_adjust(top=0.84)
     fig.savefig(PLOTS / "reward_curves.png")
@@ -319,7 +362,7 @@ RF_COLS = ["lr", "gamma", "baseline", "normalize", "episodes_per_update", "entro
 COLS = {"dqn": DQN_COLS, "ppo": PPO_COLS, "a2c": A2C_COLS, "reinforce": RF_COLS}
 
 
-def tables(data, base, conv_rows, test):
+def tables(data, base, conv_rows, test, seeds=None):
     TABLES.mkdir(parents=True, exist_ok=True)
     conv = {(a, r): f for a, r, f in conv_rows}
     level = base["heuristic"]["default"]["return_mean"]
@@ -345,10 +388,28 @@ def tables(data, base, conv_rows, test):
             f"Dispatcher level = {level:+.1f}. Returns are means over 20 validation seeds that no run trained on. "
             "The best run (bold) is picked on these scores, which flatters it, so the final comparison in "
             f"headline.md uses {len(TEST_SEEDS)} separate test seeds.\n\n" + "\n".join(lines) + "\n")
-    headline(data, base, test)
+    headline(data, base, test, seeds)
 
 
-def headline(data, base, test):
+def seed_lines(seeds) -> str:
+    if not seeds or not seeds.get("results"):
+        return ""
+    head = ["Method", "Configuration", "Validation by training seed", "Test by training seed",
+            "Test across seeds (mean ± sd)"]
+    lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
+    for a, rows in seeds["results"].items():
+        tests = np.array([r["test"] for r in rows])
+        lines.append("| " + " | ".join([
+            NAME[a], seeds["best_runs"][a],
+            " / ".join(f"{r['validation']:+.1f}" for r in rows),
+            " / ".join(f"{r['test']:+.1f}" for r in rows),
+            f"{tests.mean():+.1f} ± {tests.std(ddof=1) if len(tests) > 1 else 0:.1f}"]) + " |")
+    return ("\n\n## Seed check\n\nThe best configuration of each method, retrained on training seeds 0, 1 and 2 "
+            f"and played on the same {len(TEST_SEEDS)} test shifts (normal day). Seed 0 is the sweep run.\n\n"
+            + "\n".join(lines) + "\n")
+
+
+def headline(data, base, test, seeds=None):
     """Final comparison on the test seeds, plus paired differences (every
     method plays the same test shifts, so their returns can be compared shift
     by shift)."""
@@ -399,15 +460,18 @@ def headline(data, base, test):
         f"{NAME[lead]} scored highest on normal test days. Each cell is the method's return minus "
         f"{NAME[lead]}'s on the same shift: mean ± standard error, and the share of shifts where the method "
         "scored higher. A difference within about two standard errors of zero is not a real gap.\n\n"
-        + "\n".join(plines) + "\n")
+        + "\n".join(plines) + "\n" + seed_lines(seeds))
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--retest", action="store_true", help="re-run the test evaluation even if it is cached")
+    ap.add_argument("--retest", action="store_true",
+                    help="recompute the baselines, test evaluation and seed check even if they are cached")
     args = ap.parse_args()
     PLOTS.mkdir(parents=True, exist_ok=True)
     data = {a: load(a) for a in ALGOS}
+    if args.retest:
+        (LOGS / "baselines.json").unlink(missing_ok=True)
     base = baselines()
     test = test_results(args.retest)
     fig_reward_curves(data, base)
@@ -416,7 +480,8 @@ def main():
     fig_pg_entropy(data)
     conv = fig_convergence(data, base)
     fig_generalisation(test)
-    tables(data, base, conv, test)
+    seeds = seed_check(data, args.retest)
+    tables(data, base, conv, test, seeds)
     res = test["results"]
     print(f"{'':>23}validation  test ({len(TEST_SEEDS)} shifts)")
     for a in ALGOS:
